@@ -412,6 +412,25 @@ header.top h1{font-size:inherit}h1 .home:focus-visible{outline:2px solid var(--a
 .fs-leg{padding:8px 16px 0;display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--muted)}
 .fs-leg span{display:inline-flex;align-items:center;gap:6px}
 .fs-leg i{width:12px;height:12px;border-radius:50%;display:inline-block}
+/* fixed charges: search + drag to reorder */
+.fsearch{display:flex;align-items:center;gap:8px;margin:0 16px 12px;padding:4px 12px;border:1.5px solid var(--line);border-radius:14px;background:var(--surface-2)}
+.fsearch:focus-within{border-color:var(--accent)}
+.fsearch svg{width:18px;height:18px;color:var(--muted);flex:0 0 auto}
+.fsearch input{flex:1;min-width:0;border:0;background:transparent;font-size:16px;padding:8px 0;outline:none}
+.fcount{font-size:12.5px;color:var(--muted);white-space:nowrap}
+.flist .frow{position:relative;background:var(--surface);transition:background .2s,opacity .2s}
+.frow .grip{flex:0 0 auto;display:grid;place-items:center;width:30px;height:40px;margin:-8px -4px -8px -10px;color:var(--muted);cursor:grab;touch-action:none;border-radius:8px}
+.frow .grip svg{width:18px;height:18px}
+.frow .grip:hover{color:var(--ink);background:var(--surface-2)}
+.frow .grip:focus-visible{outline:2px solid var(--accent)}
+.frow .name{flex:1}
+.frow.dragging{z-index:3;background:var(--accent-soft);box-shadow:0 10px 24px -10px rgba(30,58,47,.45);border-radius:12px}
+.frow.dragging .grip{cursor:grabbing;color:var(--accent)}
+.frow.hit{background:var(--warn-soft);box-shadow:inset 4px 0 0 var(--warn)}
+.frow.hit .name b{color:var(--warn)}
+.frow.dim{opacity:.45}
+.fhint{padding:10px 16px 14px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line)}
+body.dragging{user-select:none;-webkit-user-select:none}
 /* documents and alerts */
 .alertcard{padding:14px 16px;display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;background:var(--warn-soft);border-color:var(--warn)}
 .alertcard p{flex:1 1 200px;color:var(--warn);font-weight:600}
@@ -1061,10 +1080,14 @@ function fixedPanel(){
   var cells = [['Total par mois', eur(tot), 'prélevé automatiquement']];
   var sec = '<section class="card sec fixed"><div class="sec-head"><div class="left"><span class="tag">Fixes</span><h3>Charges fixes</h3><span class="tot">Loyer, énergie, assurances, téléphone… prélevées chaque mois</span></div>' +
     '<button class="btn sm" data-action="add-item" data-type="fixed" data-k="add-fixed">Ajouter une charge</button></div>' +
-    (rows.length ? rows.map(function(it){
-      return '<div class="frow"><div class="name"><b>' + esc(it.name) + '</b>' + (it.note ? '<small>' + esc(it.note) + '</small>' : '') + '</div>' +
+    (rows.length > 1 ? '<div class="fsearch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>' +
+      '<input id="fx-search" data-k="fx-search" type="search" autocomplete="off" enterkeyhint="search" placeholder="Rechercher une charge (ex. assurance)" value="' + esc(S.fq || '') + '" aria-label="Rechercher une charge fixe"><span class="fcount" id="fx-count" aria-live="polite"></span></div>' : '') +
+    (rows.length ? '<div class="flist" id="fx-list">' + rows.map(function(it){
+      return '<div class="frow" data-id="' + esc(it.id) + '" data-q="' + esc(norm(it.name + ' ' + (it.note || '') + ' ' + (+it.amount || 0))) + '">' +
+        (rows.length > 1 ? '<span class="grip" data-grip="' + esc(it.id) + '" role="button" tabindex="0" aria-label="Déplacer ' + esc(it.name) + ' (glisser, ou flèches haut et bas)"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span>' : '') +
+        '<div class="name"><b>' + esc(it.name) + '</b>' + (it.note ? '<small>' + esc(it.note) + '</small>' : '') + '</div>' +
         '<div class="r"><span class="amt">' + eur(+it.amount || 0) + '</span><button class="btn sm ghost" data-action="edit-item" data-id="' + esc(it.id) + '" data-k="e-' + esc(it.id) + '">Modifier</button></div></div>';
-    }).join('') : '<div class="empty-row">Aucune charge fixe pour le moment.</div>') + '</section>';
+    }).join('') + '</div>' + (rows.length > 1 ? '<p class="fhint">Pour ranger les charges, faites glisser la poignée ⠿ à gauche d\'une ligne.</p>' : '') : '<div class="empty-row">Aucune charge fixe pour le moment.</div>') + '</section>';
   var pend = pendingAlerts();
   var alertCard = pend ? '<section class="card alertcard"><p>⚠ ' + pend + (pend > 1 ? ' points à vérifier' : ' point à vérifier') + ' dans « ' + esc(S.doc.name) + ' »</p><button class="btn sm primary" data-action="open-doc" data-k="open-doc">Voir</button></section>' :
     (S.doc ? '<div><button class="btn sm ghost" data-action="open-doc" data-k="open-doc">Revoir l\'analyse de « ' + esc(S.doc.name) + ' »</button></div>' : '');
@@ -1189,9 +1212,10 @@ function view(){
 function render(){
   var app = $('#app');
   var act = document.activeElement, key = act && act.dataset ? act.dataset.k : null;
-  var hadText = act && (act.id === 'qa-text' || act.id === 'ask-text');
+  var hadText = act && (act.id === 'qa-text' || act.id === 'ask-text' || act.id === 'fx-search');
   var sy = window.scrollY;
   app.innerHTML = view();
+  applyFixedSearch(false);
   if (key) {
     var n = app.querySelector('[data-k="' + key + '"]');
     if (n) { n.focus({preventScroll:true}); if (hadText && n.setSelectionRange) { var L = n.value.length; n.setSelectionRange(L, L); } }
@@ -1869,10 +1893,68 @@ document.addEventListener('click', function(e){
     persistCfg(); closeModal(); render(); toast('Supprimé'); return;
   }
 });
+/* fixed charges: highlight what matches the search */
+function applyFixedSearch(scroll){
+  var list = $('#fx-list'); if (!list) return;
+  var q = norm(S.fq || '').replace(',', '.').trim(), n = 0, first = null;
+  list.querySelectorAll('.frow').forEach(function(r){
+    var hit = !!q && r.dataset.q.indexOf(q) >= 0;
+    r.classList.toggle('hit', hit); r.classList.toggle('dim', !!q && !hit);
+    if (hit) { n++; if (!first) first = r; }
+  });
+  var c = $('#fx-count'); if (c) c.textContent = q ? (n ? n + ' trouvée' + (n > 1 ? 's' : '') : 'aucune') : '';
+  if (scroll && first) first.scrollIntoView({block:'center', behavior:'smooth'});
+}
+/* fixed charges: new order of the fixed items, other items keep their places */
+function saveFixedOrder(ids){
+  var old = itemsOf('fixed').map(function(i){ return i.id; });
+  if (old.join() === ids.join()) return;
+  var queue = ids.map(function(id){ return S.cfg.items.find(function(x){ return x.id === id; }); }).filter(Boolean);
+  if (queue.length !== old.length) return;
+  S.cfg.items = S.cfg.items.map(function(it){ return it.type === 'fixed' ? queue.shift() : it; });
+  persistCfg(); render();
+}
+var drag = null;
+document.addEventListener('pointerdown', function(e){
+  var g = e.target.closest && e.target.closest('[data-grip]'); if (!g || (e.button && e.button !== 0)) return;
+  var row = g.closest('.frow'), list = $('#fx-list'); if (!row || !list) return;
+  e.preventDefault();
+  drag = {row:row, list:list, pid:e.pointerId};
+  try { g.setPointerCapture(e.pointerId); } catch(_){}
+  row.classList.add('dragging'); document.body.classList.add('dragging');
+});
+document.addEventListener('pointermove', function(e){
+  if (!drag || e.pointerId !== drag.pid) return;
+  e.preventDefault();
+  var y = e.clientY, sibs = Array.prototype.filter.call(drag.list.querySelectorAll('.frow'), function(x){ return x !== drag.row; });
+  var before = sibs.find(function(s){ var b = s.getBoundingClientRect(); return y < b.top + b.height / 2; });
+  if (before) { if (drag.row.nextElementSibling !== before) drag.list.insertBefore(drag.row, before); }
+  else if (drag.list.lastElementChild !== drag.row) drag.list.appendChild(drag.row);
+  if (y < 90) window.scrollBy(0, -14); else if (y > window.innerHeight - 70) window.scrollBy(0, 14);
+});
+function endDrag(e){
+  if (!drag || (e && e.pointerId !== drag.pid)) return;
+  var d = drag; drag = null;
+  d.row.classList.remove('dragging'); document.body.classList.remove('dragging');
+  saveFixedOrder(Array.prototype.map.call(d.list.querySelectorAll('.frow'), function(x){ return x.dataset.id; }));
+}
+document.addEventListener('pointerup', endDrag);
+document.addEventListener('pointercancel', endDrag);
+document.addEventListener('keydown', function(e){
+  var g = e.target.closest && e.target.closest('[data-grip]');
+  if (!g || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+  e.preventDefault();
+  var ids = itemsOf('fixed').map(function(i){ return i.id; }), k = ids.indexOf(g.dataset.grip), j = k + (e.key === 'ArrowUp' ? -1 : 1);
+  if (k < 0 || j < 0 || j >= ids.length) return;
+  ids.splice(j, 0, ids.splice(k, 1)[0]);
+  var id = g.dataset.grip; saveFixedOrder(ids);
+  var ng = document.querySelector('[data-grip="' + id + '"]'); if (ng) ng.focus();
+});
+
 /* pages: the phone's back button returns to the home page */
 function openPage(k){
   if (!PAGES[k]) return;
-  var was = S.tab; S.tab = k;
+  var was = S.tab; S.tab = k; S.fq = '';
   try { if (!was) history.pushState({mzPage:k}, ''); else history.replaceState({mzPage:k}, ''); } catch(e){}
   render(); window.scrollTo({top:0});
 }
@@ -1908,6 +1990,7 @@ document.addEventListener('input', function(e){
   var id = e.target.id;
   if (id === 'qa-text') { S.qa = e.target.value; return; }
   if (id === 'ask-text') { S.askQ = e.target.value; return; }
+  if (id === 'fx-search') { S.fq = e.target.value; applyFixedSearch(true); return; }
   if (!S.m) return;
   if (id === 'm-amount') S.m.amount = e.target.value;
   else if (id === 'm-date') S.m.date = e.target.value;
