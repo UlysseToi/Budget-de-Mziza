@@ -18,7 +18,7 @@ Ce n'est PAS un tableur (un premier tableau Excel avait été fait puis rejeté)
 ### Fichiers du dépôt
 
 - `index.html` : **toute l'application** (une seule page HTML, CSS + JS vanilla, aucune bibliothèque). ~100 Ko. C'est le fichier à modifier.
-- `docs/` : petite page de lancement statique (GitHub Pages) avec `manifest.webmanifest` et l'icône, pour créer un raccourci d'écran d'accueil. À activer côté GitHub : Settings > Pages > main / `/docs` (pas encore fait par l'utilisateur ; si le dépôt est privé, Pages peut exiger un abonnement).
+- `docs/` : petite page de lancement statique (GitHub Pages) avec `manifest.webmanifest` et l'icône, pour créer un raccourci d'écran d'accueil. **En ligne** (activé le 2026-10-11, main / `/docs`) : https://ulyssetoi.github.io/Budget-de-Mziza/
 - `icones/` : icône (maison avec un cœur, fond vert) en SVG + PNG 180/192/512.
 - `README.md`.
 
@@ -90,7 +90,7 @@ Mode local de secours : localStorage `budget-mziza-v2` (cfg + tx), `budget-mziza
 
 ## À faire / idées en attente
 
-1. L'utilisateur doit activer GitHub Pages (`main` / `/docs`) s'il veut la page de lancement avec l'icône ; ensuite lui donner l'URL à envoyer (`https://ulyssetoi.github.io/Budget-de-Mziza/`, à confirmer).
+1. ~~Activer GitHub Pages~~ : fait le 2026-10-11, page vérifiée (icône maison + cœur OK) : https://ulyssetoi.github.io/Budget-de-Mziza/ . Reste à tester l'ajout à l'écran d'accueil sur un vrai téléphone.
 2. Demander à l'utilisateur de tester sur un vrai téléphone : barre Claude (une vraie demande qui applique bien les changements), micro, scan de ticket, partage avec une autre personne. Jamais testés hors Playwright/stubs.
 3. Étiquettes de l'axe horizontal de la courbe qui se chevauchent un peu à droite (« déc. 28 / juil. 29 ») : à corriger.
 4. Éventuel import CSV bancaire (voir plus haut).
