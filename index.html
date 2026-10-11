@@ -416,9 +416,16 @@ header.top h1{font-size:inherit}h1 .home:focus-visible{outline:2px solid var(--a
 .addbar .btn.primary{padding:13px 20px;font-size:16px}
 /* "Ce mois-ci" card + overdraft */
 .mcard{padding:18px 20px;display:flex;flex-direction:column;gap:10px}
-.mhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
-.mhead h2{font:700 18px var(--font-display)}
-.mhead span{color:var(--muted);font-size:13.5px;text-transform:capitalize}
+.mhead{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.mtitle{flex:1;min-width:0;text-align:center;display:flex;flex-direction:column}
+.mhead h2{font:700 19px var(--font-display)}
+.mhead span{color:var(--muted);font-size:13px;text-transform:capitalize}
+.mnav{flex:0 0 auto;width:40px;height:40px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:700 18px var(--font-display);cursor:pointer}
+.mnav:hover{border-color:var(--muted)}
+.mback{all:unset;align-self:center;font-size:13px;font-weight:600;color:var(--accent);cursor:pointer;margin-top:-4px}
+.mback:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.ml .mnote{display:block;font-size:12px;color:var(--muted);font-weight:400}
+.ml .cross{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--bad);color:#fff;font:800 15px/1 var(--font-body)}
 .mlines{display:flex;flex-direction:column}
 .ml{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:7px 0;border-top:1px solid var(--line);font-size:14.5px}
 .ml:first-child{border-top:0}
@@ -779,10 +786,19 @@ function dailyStats(m, infos){
   itemsOf('fixed').forEach(function(i){ fixedIds[i.id] = true; });
   var dayTx = txMonth(m).filter(function(t){ return t.kind === 'expense' && !fixedIds[t.ref]; });
   var rDay = sum(dayTx, function(t){ return +t.amount || 0; });
-  var left = planIncome() - planFixed() - monthlyDebts(infos) - odOf(m);
+  var debts = debtsDue(m);
+  var left = planIncome() - planFixed() - debts - odOf(m);
   var bud = dailyBudgets(left);
   var env = sum(Object.keys(bud), function(k){ return bud[k]; });
-  return {items:items, dayTx:dayTx, rDay:rDay, env:env, left:left, bud:bud, base:env > 0 ? env : Math.max(0, left)};
+  return {items:items, dayTx:dayTx, rDay:rDay, env:env, left:left, debts:debts, bud:bud, base:env > 0 ? env : Math.max(0, left)};
+}
+/* what the debts really take in month m: only debts already started, not skipped that month, and not yet paid off */
+function debtsDue(m){
+  return round2(sum(S.cfg.debts, function(d){
+    if (m < debtFrom(d) || (d.skipped || []).indexOf(m) >= 0) return 0;
+    var before = Math.max(0, (+d.start || 0) - paidAt(d, addMonths(m, -1)));
+    return Math.min(Math.max(0, +d.monthly || 0), before);
+  }));
 }
 
 function etaText(infos){
@@ -850,19 +866,31 @@ function heroHTML(infos){
 
 /* overdraft at the start of a month (stored per month in cfg.od): it is taken out of that month's money */
 function odOf(m){ return Math.max(0, +((S.cfg.od || {})[m]) || 0); }
+function monthTitle(m){
+  if (m === nowMonth()) return 'Ce mois-ci';
+  var n = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1, 1).toLocaleDateString('fr-FR', {month:'long'});
+  return 'Mois ' + (/^[aeiouyàâéèêîôû]/i.test(n) ? 'd\'' : 'de ') + n;
+}
 function monthCardHTML(infos){
-  var m = nowMonth(), ds = dailyStats(m, infos), od = odOf(m), rest = round2(ds.left - ds.rDay);
+  var m = S.cm || nowMonth(), now = nowMonth(), ds = dailyStats(m, infos), od = odOf(m), rest = round2(ds.left - ds.rDay);
   var line = function(label, v, cls){ return '<div class="ml' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span><b>' + v + '</b></div>'; };
-  return '<section class="card mcard" aria-label="Ce mois-ci"><div class="mhead"><h2>Ce mois-ci</h2><span>' + esc(monthLabel(m)) + '</span></div>' +
+  var firstDebt = S.cfg.debts.map(debtFrom).filter(function(f){ return f > m; }).sort()[0];
+  var debtLabel = 'Dettes' + (!ds.debts && firstDebt ? ' <small class="mnote">prélevées à partir de ' + esc(monthLabel(firstDebt)) + '</small>' : '');
+  var totalLabel = m < now ? (rest < 0 ? 'Il a manqué à la fin du mois' : 'Il est resté à la fin du mois') : (rest < 0 ? 'Il manque pour finir le mois' : 'Il reste pour finir le mois');
+  return '<section class="card mcard" aria-label="' + esc(monthTitle(m)) + '"><div class="mhead">' +
+    '<button class="mnav" data-action="cm-prev" data-k="cm-prev" aria-label="Mois précédent">&larr;</button>' +
+    '<div class="mtitle"><h2>' + esc(monthTitle(m)) + '</h2><span>' + esc(monthLabel(m)) + '</span></div>' +
+    '<button class="mnav" data-action="cm-next" data-k="cm-next" aria-label="Mois suivant">&rarr;</button></div>' +
+    (m !== now ? '<button class="mback" data-action="cm-now" data-k="cm-now">Revenir à ce mois-ci</button>' : '') +
     '<div class="mlines">' +
     line('Entrées d\'argent', '+ ' + esc(eur(planIncome())), 'up') +
     line('Charges fixes', '− ' + esc(eur(planFixed()))) +
-    line('Dettes', '− ' + esc(eur(monthlyDebts(infos)))) +
+    line(debtLabel, '− ' + esc(eur(ds.debts))) +
     (od ? '<button class="ml od" data-action="od-edit" data-m="' + m + '" data-k="od-h"><span>Découvert à combler <small>modifier</small></span><b>− ' + esc(eur(od)) + '</b></button>' :
       '<button class="ml od add" data-action="od-edit" data-m="' + m + '" data-k="od-h"><span>+ Indiquer un découvert</span><b></b></button>') +
-    line('Pour le quotidien', esc(eur(ds.left)), 'sub' + (ds.left < 0 ? ' bad' : '')) +
-    line('Déjà dépensé', '− ' + esc(eur(ds.rDay))) +
-    '</div><div class="mtotal' + (rest < 0 ? ' bad' : '') + '"><span>' + (rest < 0 ? 'Il manque pour finir le mois' : 'Il reste pour finir le mois') + '</span><b>' + esc(eur(Math.abs(rest))) + '</b></div></section>';
+    line('Pour le quotidien', ds.left < 0 ? '<span class="cross" role="img" aria-label="Plus rien pour le quotidien">✕</span>' : esc(eur(ds.left)), 'sub' + (ds.left < 0 ? ' bad' : '')) +
+    line(m > now ? 'Dépensé' : 'Déjà dépensé', '− ' + esc(eur(ds.rDay))) +
+    '</div><div class="mtotal' + (rest < 0 ? ' bad' : '') + '"><span>' + totalLabel + '</span><b>' + esc(eur(Math.abs(rest))) + '</b></div></section>';
 }
 function openOd(m){
   S.od = {m:m};
@@ -1891,6 +1919,8 @@ document.addEventListener('click', function(e){
   if (a === 'edit-debt') return openDebt(el.dataset.id);
   if (a === 'add-debt') return openDebt(null);
   if (a === 'od-edit') return openOd(el.dataset.m || nowMonth());
+  if (a === 'cm-prev' || a === 'cm-next') { S.cm = addMonths(S.cm || nowMonth(), a === 'cm-prev' ? -1 : 1); render(); return; }
+  if (a === 'cm-now') { S.cm = null; render(); return; }
   if (a === 'od-clear') { if (S.od) saveOd(S.od.m, 0); return; }
   if (a === 'del-debt') {
     if (!el.dataset.armed) { el.dataset.armed = '1'; el.classList.add('armed'); el.textContent = 'Confirmer la suppression'; return; }
