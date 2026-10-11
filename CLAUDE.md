@@ -46,33 +46,36 @@ Document `app/config` :
 
 Collection `tx` (une dépense par document) : `{date, kind:"expense", ref:<id item>, label, amount, note}`.
 
-Collection `hist` (historique des demandes à Claude, 48 h) : `{q, t (ms), lines:[{t, miss?}], before:{items,debts}, after:{items,debts}, undone}`.
+Collection `hist` (historique de TOUTES les demandes à Claude, 30 jours, 120 max) : `{q, t (ms), st:'applied'|'proposed'|'question' (absent = applied), lines:[{t, miss?}], ops, a (réponse), before, after, undone, dead}`. `dead` = annulée puis dépassée par une nouvelle application (plus de « Rétablir »).
+
+Document `app/lastdoc` : dernière analyse de document `{name, t, type:'releve'|'facture'|'ticket'|'autre', resume, alerts:[{titre, explication, ops, state:''|'ok'|'no'}]}`. Les alertes sans `state` font la pastille rouge sur « Charges fixes ».
 
 Écritures de `app/config` : le document entier est remplacé (dernier écrit gagne) ; les dépenses sont des documents séparés (pas de conflit). Écrire dans la base depuis Claude : outil `ArtifactData` avec `if_version` pour un document existant.
 
-Mode local de secours : localStorage `budget-mziza-v2` (cfg + tx), `budget-mziza-hist`.
+Mode local de secours : localStorage `budget-mziza-v2` (cfg + tx), `budget-mziza-hist`, `budget-mziza-doc`.
 
 ## Interface (ce qui a été demandé, dans l'ordre d'importance)
 
 - Titre « Budget de M'ziza » = **bouton pastille verte douce avec icône maison + cœur**, plus gros que le texte, espacé du sous-titre ; un clic ramène à l'accueil (aucun onglet ouvert).
-- **Accueil** : (barre Claude), bloc hero (reste à rembourser en très gros, jauge circulaire avec % remboursé, déjà remboursé, dette de départ, par mois, fin prévue), puis les **4 boutons**, puis la **courbe de remboursement**. **Aucun onglet n'est déplié par défaut** ; recliquer sur l'onglet actif le referme. La courbe n'apparaît **que sur l'accueil**. Elle a des **points de couleur à la fin de chaque dette** et une légende « Fin de chaque dette » dessous.
-- **4 boutons** : Dettes, Charges fixes, Budget quotidien, Entrées d'argent. Petits, avec icône dans un carré, **titre gros et gras, somme dessous petite et grise**, **camaïeu de verts du plus clair au plus foncé** (variables `--t1..--t4`, `--t1s..--t4s`), contour de leur vert (le plus clair ne doit pas se fondre dans le fond), plein au survol/sélection.
+- **Accueil** : (barre Claude), bloc hero (reste à rembourser en très gros, jauge circulaire avec % remboursé, déjà remboursé, dette de départ, par mois, fin prévue), puis les **4 boutons**, puis la **courbe de remboursement**. La courbe a des **points de couleur à la fin de chaque dette** et une légende dessous ; **un toucher l'ouvre en plein écran** (défilement horizontal, boutons − / +, toucher un mois = détail : reste total et par dette, dette qui se termine ce mois-là).
+- **Chaque bouton ouvre une page à part** (depuis le 2026-10-11, version 21) : on ne voit plus que le titre (retour accueil), la barre Claude, la pastille Historique, « ← Retour à l'accueil » et la page. Le bouton retour du téléphone revient à l'accueil (history.pushState).
+- **4 boutons** : Dettes, Charges fixes, Budget quotidien, Entrées d'argent. Petits, avec icône dans un carré, **titre gros et gras, somme dessous petite et grise** (Dettes : restant ET « par mois », les deux sont obligatoires), **camaïeu de verts du plus clair au plus foncé** (variables `--t1..--t4`, `--t1s..--t4s`), contour de leur vert (le plus clair ne doit pas se fondre dans le fond), plein au survol/sélection.
 - **Thème** : tons verts doux, fond blanc-vert clair (`--bg:#EDF3EE`, surfaces `#FBFDFB`) ; l'utilisateur a **rejeté** une version plus verte/moins blanche : rester sur vert et blanc. Polices Bricolage Grotesque + Hanken Grotesk. Mode sombre prévu. Mobile d'abord, gouttière 16 px.
-- **Dettes** : liste de dettes (reste, barre, départ, déjà remboursé, mensualité, fin prévue) + « Signaler un mois non payé ». Pas de « Modifier », pas d'historique de remboursements.
-- **Charges fixes** : liste simple (nom, montant, Modifier), ajout/suppression possibles ; **aucun statut**, pas de « marquer payé ».
-- **Entrées d'argent** : liste groupée (salaire / enfants / autres), sans statut « attendu/reçu ». Entrées considérées systématiques chaque mois.
+- **Dettes** : liste de dettes (reste, barre, départ, déjà remboursé, mensualité, fin prévue, note) + « Signaler un mois non payé » + « Ajouter une dette ». **Toucher une dette** ouvre une fenêtre : nom, montant de départ, mensualité, premier prélèvement, **note libre** (ex. « payé le 5 novembre par Airton »), supprimer.
+- **Charges fixes** : liste simple (nom, montant, Modifier), ajout/suppression possibles ; **aucun statut**. Carte **« Ajouter un document »** (Prendre en photo / Choisir un fichier : photo, PDF, CSV/TXT) : Claude identifie le type, résume et liste les **incohérences** avec le budget (charges fixes, entrées, mensualités, dépassements) ; chaque alerte a « Accepter la modification » / « Ne pas modifier ». Un lien ne peut pas être ouvert (réseau bloqué dans l'artifact) : il faut télécharger le fichier. PDF lus dans la page avec pdf.js 3.11.174 (cdnjs ; le script worker est chargé d'abord pour éviter le Worker cross-origin) ; PDF scanné → pages en images ; Excel non lu (demander PDF/CSV).
+- **Entrées d'argent** : liste groupée (salaire / enfants / autres), sans statut. **Toucher une ligne** (enfant ou salaire) ouvre la fenêtre de modification du montant.
 - **Budget quotidien** : champ « Ajouter une dépense » **en haut** (texte « 100 euros courses » classé automatiquement, bouton micro, bouton « Scanner un ticket de caisse » si les images sont disponibles) — **c'est le seul endroit pour ajouter une dépense**. Carte « Répartition du budget » : **gros camembert** à couleurs bien distinctes + **légende à côté** (sur téléphone : dessous) où chaque ligne = case à cocher, pastille couleur, nom (cliquable pour changer la part), **jauge**, montant. Quand une catégorie n'a aucune dépense : le budget est en gros et « il reste X € » en petit ; **dès la première dépense** : « il reste X € » passe en **gros et gras** (vert, rouge si dépassé) et le budget devient petit. Décocher une catégorie recalcule les autres automatiquement. Puis liste « Dépenses du mois ».
 - **Barre Claude** (en haut, sticky, visible partout) : voir plus bas. Bouton micro à côté.
-- **Historique** : petite pastille discrète « Historique (n) », **entourée en permanence**, qui se met **en relief au survol** ; **n'apparaît qu'après une première demande** ; se déplie en liste (plus récente d'abord) avec, par demande, ses modifications et « Revenir à avant » / « Rétablir ». Gardé 48 h puis purgé.
+- **Historique** : petite pastille « Historique (n) », entourée, en relief au survol, visible dès qu'il y a une demande ; ouvre une **fenêtre fixe qui défile** (plus récente d'abord) : demandes appliquées (« Revenir à avant » / « Rétablir »), propositions non appliquées (« Appliquer maintenant »), simples questions (réponse). Gardé 30 jours.
 - Bloc « Ajouter un raccourci sur le téléphone » (replié) en bas de l'accueil.
 
 ## Barre « question à Claude » (`askClaude`)
 
 - Utilise `claude.use('sample')` → `sample.json(prompt, {modelTier:'default', cache:false, signal})`. Dépense le quota Claude **du visiteur** ; première utilisation = demande d'autorisation ; il faut que le visiteur ait un compte Claude (gratuit : non vérifié).
 - Le prompt reçoit l'état complet en JSON (ids inclus) + l'historique actif, et doit répondre `{"reponse", "changes":[…], "annuler": null|N|"toutes"}`.
-- **Les `changes` sont appliqués IMMÉDIATEMENT** (pas de fenêtre « valider », l'utilisateur l'a rejeté deux fois) puis enregistrés dans `hist` ; seule une courte confirmation (toast avec bouton Annuler) s'affiche. Une carte de réponse n'apparaît que pour une pure question de calcul (« combien faudrait-il… »).
+- **Changement de décision le 2026-10-11** : l'utilisateur VEUT maintenant une fenêtre « Proposition de Claude » avec l'explication détaillée, la liste « Ce qui changera si vous validez », l'effet sur le disponible du quotidien, et **Valider / Fermer**. Rien n'est modifié avant Valider ; une proposition fermée reste dans l'historique (« proposée »). Les questions sans modification s'affichent dans la même fenêtre (« Réponse de Claude »). Une demande d'annulation passe aussi par Valider.
 - Opérations : `set_amount`, `add_item` (income|fixed), `remove_item`, `set_share` (part % d'une catégorie), `set_active`, `set_debt` (monthly/start), `add_debt`, `remove_debt`. Cibles par id ou nom (`findBy`). Éléments introuvables listés « ignoré ».
-- « Annule la dernière » / « annule les deux dernières » / « reviens en arrière » → `annuler` → `revertTo`. Revenir en arrière restaure `before` de la demande visée et marque celle-ci et les suivantes `undone` ; `redoTo` restaure `after`. Une nouvelle demande supprime les demandes annulées. Limite connue : une modification manuelle faite entre-temps est écrasée par la restauration.
+- « Annule la dernière » / « annule les deux dernières » / « reviens en arrière » → `annuler` → `revertTo`. Revenir en arrière restaure `before` de la demande visée et marque celle-ci et les suivantes `undone` ; `redoTo` restaure `after`. Une nouvelle application rend les demandes annulées définitives (`dead`), sans les supprimer. Limite connue : une modification manuelle faite entre-temps est écrasée par la restauration.
 - Cas d'usage voulus : « si Andreia et Auréa donnent chacune 50 € », « si M'ziza voulait 400 € de courses, combien devrait-elle gagner en plus / être aidée / renégocier ses dettes ».
 - Ne simule pas les dépenses du quotidien (`tx`).
 
@@ -84,14 +87,15 @@ Mode local de secours : localStorage `budget-mziza-v2` (cfg + tx), `budget-mziza
 
 ## Ce qui a été fait / exclu
 
-- Fait : tout ce qui précède, publié (versions 1 à 20 de l'artifact), commité sur GitHub.
+- Fait : tout ce qui précède, publié (versions 1 à 21 de l'artifact), commité sur GitHub. Version 21 testée dans un navigateur local à 420 px avec un faux Claude (pages, dettes, entrées, proposition/validation, historique, PDF texte, CSV, courbe plein écran) ; pas encore testée avec le vrai Claude ni sur téléphone.
+- La page est maintenant partagée « toute personne ayant le lien » (réglé par l'utilisateur).
 - Impossible depuis une page web : créer automatiquement une icône d'écran d'accueil ou installer Claude ; changer l'icône du raccourci d'une page claude.ai (elle est choisie par claude.ai) ; lire un compte bancaire (idée évoquée : Open Banking DSP2 via un agrégateur type Powens/Bridge, lecture seule, mais il faudrait un serveur, des clés et un contrat — non fait ; alternative simple proposée : import d'un export CSV de la banque, classé automatiquement, sans aucun accès au compte — **à proposer/construire si l'utilisateur le veut**).
 - Partage : la page est **privée**, l'utilisateur doit la partager lui-même ; sur claude.ai, la base est partagée en temps réel entre tous ceux qui ont accès, écriture réservée à ceux qui ont le droit d'écrire (niveau « interact » testé OK). Ouverture par quelqu'un sans compte Claude : non vérifié, probablement impossible.
 
 ## À faire / idées en attente
 
 1. ~~Activer GitHub Pages~~ : fait le 2026-10-11, page vérifiée (icône maison + cœur OK) : https://ulyssetoi.github.io/Budget-de-Mziza/ . Reste à tester l'ajout à l'écran d'accueil sur un vrai téléphone.
-2. Demander à l'utilisateur de tester sur un vrai téléphone : barre Claude (une vraie demande qui applique bien les changements), micro, scan de ticket, partage avec une autre personne. Jamais testés hors Playwright/stubs.
-3. Étiquettes de l'axe horizontal de la courbe qui se chevauchent un peu à droite (« déc. 28 / juil. 29 ») : à corriger.
-4. Éventuel import CSV bancaire (voir plus haut).
+2. Demander à l'utilisateur de tester sur un vrai téléphone : barre Claude (proposition + Valider), analyse d'un vrai relevé PDF/CSV et d'une photo de facture, micro, scan de ticket, partage. Jamais testés hors stubs.
+3. ~~Étiquettes de la courbe qui se chevauchent~~ : corrigé (version 21).
+4. ~~Import CSV bancaire~~ : fait via « Ajouter un document » (version 21).
 5. Ajuster les parts du budget quotidien si l'utilisatrice donne ses vrais chiffres.
