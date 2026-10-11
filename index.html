@@ -175,6 +175,8 @@ details>summary::-webkit-details-marker{display:none}
 .donut{flex:0 0 auto;width:200px;max-width:100%}
 .donut svg{display:block;width:100%;height:auto}
 .donut .sl{stroke:var(--surface);stroke-width:2.5}
+.donut .used{stroke:var(--surface);stroke-width:1}
+.donut .ctr.neg{fill:var(--bad)}
 .donut .ctr{font:700 24px var(--font-display);fill:var(--ink);text-anchor:middle;font-variant-numeric:tabular-nums}
 .donut .cts{font:500 11px var(--font-body);fill:var(--muted);text-anchor:middle;letter-spacing:.06em;text-transform:uppercase}
 .dleg{flex:1 1 220px;min-width:0;display:flex;flex-direction:column;gap:8px}
@@ -1143,29 +1145,35 @@ function openFs(){
   renderFs('open');
 }
 
-/* donut: share of each category in the monthly daily budget */
-function donutSVG(rows, total){
+/* donut: share of each category in the month's daily budget. The part already spent in each slice is hatched,
+   and the centre shows what is left to spend this month. */
+function donutSVG(rows, total, spent, m){
   var cx = 100, cy = 100, R = 90, r = 56;
-  var out = '<svg viewBox="0 0 200 200" role="img" aria-label="Répartition du budget du quotidien : ' + eur(total) + ' par mois">';
+  var left = round2(total - (spent || 0));
+  var when = m === nowMonth() ? 'ce mois-ci' : 'en ' + monthName(m);
+  var out = '<svg viewBox="0 0 200 200" role="img" aria-label="Répartition du budget du quotidien : ' + eur(total) + ', il reste ' + eur(left) + ' ' + when + '">' +
+    '<defs><pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" style="fill:var(--surface);opacity:.62"/><line x1="0" y1="0" x2="0" y2="7" style="stroke:var(--muted);stroke-width:2.6;opacity:.75"/></pattern></defs>';
   var parts = rows.filter(function(x){ return x.plan > 0; });
   if (!parts.length || total <= 0) {
     out += '<circle cx="100" cy="100" r="' + ((R + r) / 2) + '" fill="none" stroke="var(--track)" stroke-width="' + (R - r) + '"/>' +
       '<text class="cts" x="100" y="104">Budgets à définir</text></svg>';
     return out;
   }
-  if (parts.length === 1) {
-    out += '<circle cx="100" cy="100" r="' + ((R + r) / 2) + '" fill="none" stroke="' + parts[0].color + '" stroke-width="' + (R - r) + '"><title>' + esc(parts[0].name) + '</title></circle>';
-  } else {
-    var ang = -Math.PI / 2;
-    parts.forEach(function(p){
-      var sweep = 2 * Math.PI * p.plan / total, a2 = ang + sweep, large = sweep > Math.PI ? 1 : 0;
-      var P = function(rad, a){ return (cx + rad * Math.cos(a)).toFixed(2) + ' ' + (cy + rad * Math.sin(a)).toFixed(2); };
-      var d = 'M' + P(R, ang) + ' A' + R + ' ' + R + ' 0 ' + large + ' 1 ' + P(R, a2) + ' L' + P(r, a2) + ' A' + r + ' ' + r + ' 0 ' + large + ' 0 ' + P(r, ang) + ' Z';
-      out += '<path class="sl" d="' + d + '" fill="' + p.color + '"><title>' + esc(p.name) + ' : ' + esc(eur(p.plan)) + ' (' + Math.round(100 * p.plan / total) + ' %)</title></path>';
-      ang = a2;
-    });
-  }
-  out += '<text class="ctr" x="100" y="102">' + esc(eur(total)) + '</text><text class="cts" x="100" y="120">par mois</text></svg>';
+  var P = function(rad, a){ return (cx + rad * Math.cos(a)).toFixed(2) + ' ' + (cy + rad * Math.sin(a)).toFixed(2); };
+  /* ring segment from a1 to a2; a full turn is drawn as two halves */
+  var seg = function(a1, a2){
+    if (a2 - a1 >= 2 * Math.PI - 1e-6) return seg(a1, a1 + Math.PI) + ' ' + seg(a1 + Math.PI, a1 + 2 * Math.PI);
+    var large = a2 - a1 > Math.PI ? 1 : 0;
+    return 'M' + P(R, a1) + ' A' + R + ' ' + R + ' 0 ' + large + ' 1 ' + P(R, a2) + ' L' + P(r, a2) + ' A' + r + ' ' + r + ' 0 ' + large + ' 0 ' + P(r, a1) + ' Z';
+  };
+  var ang = -Math.PI / 2;
+  parts.forEach(function(p){
+    var sweep = 2 * Math.PI * p.plan / total, a2 = ang + sweep, used = Math.min(1, Math.max(0, (p.real || 0) / p.plan));
+    out += '<path class="sl" d="' + seg(ang, a2) + '" fill="' + p.color + '"><title>' + esc(p.name) + ' : ' + esc(eur(p.plan)) + ' (' + Math.round(100 * p.plan / total) + ' %)</title></path>';
+    if (used > 0.002) out += '<path class="used" d="' + seg(ang, ang + sweep * used) + '" fill="url(#hatch)"><title>' + esc(p.name) + ' : ' + esc(eur(p.real)) + ' dépensés sur ' + esc(eur(p.plan)) + '</title></path>';
+    ang = a2;
+  });
+  out += '<text class="ctr' + (left < 0 ? ' neg' : '') + '" x="100" y="98">' + esc(eur(left)) + '</text><text class="cts" x="100" y="115">il reste</text><text class="cts" x="100" y="129">' + esc(when) + '</text></svg>';
   return out;
 }
 
@@ -1305,7 +1313,7 @@ function dailyPanel(infos){
   else note = '<p class="dnote">Les ' + eur(ds.env) + ' disponibles sont répartis entre les catégories cochées. Décochez-en une : le reste se recalcule.</p>';
   var plans = rows.filter(function(r){ return r.active && r.plan > 0; });
   var card = '<section class="card dcard"><h2>Répartition du budget</h2>' +
-    '<div class="dwrap"><div class="donut">' + donutSVG(plans, ds.env) + '</div>' +
+    '<div class="dwrap"><div class="donut">' + donutSVG(plans, ds.env, ds.rDay, m) + '</div>' +
     '<div class="cats">' + rows.map(catRow).join('') + (orphan > 0.004 ? '<div class="empty-row">Dont ' + eur(orphan) + ' dans une catégorie supprimée.</div>' : '') + '</div></div>' + note +
     '<p class="dnote">Touchez un montant pour changer le budget de la catégorie, en euros.</p></section>';
   var list = '<section class="card sec"><div class="sec-head"><div class="left"><h3>Dépenses du mois</h3><span class="tot">' + ds.dayTx.length + ' enregistrée' + (ds.dayTx.length > 1 ? 's' : '') + '</span></div></div>' +
