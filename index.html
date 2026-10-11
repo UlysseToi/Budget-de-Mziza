@@ -215,10 +215,12 @@ details>summary::-webkit-details-marker{display:none}
 @keyframes pulse{50%{box-shadow:0 0 0 7px var(--accent-soft)}}
 @media (prefers-reduced-motion: reduce){.ask .mic.on{animation:none}}
 .sim{padding:4px 16px}
-.sim{padding:0;border:2px solid var(--accent)}
-.sim summary{display:flex;align-items:center;gap:10px;padding:13px 16px;font:700 16px var(--font-display);color:var(--accent)}
-.sim summary svg{width:22px;height:22px;flex:0 0 auto}
-.sim .histlist{padding:0 16px 14px}
+.sim{padding:0;border:0;box-shadow:none;background:transparent;margin-top:-10px}
+.sim summary{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;font:500 12.5px var(--font-body);color:var(--muted);border-radius:999px}
+.sim summary:hover{background:var(--accent-soft)}
+.sim summary svg{width:14px;height:14px;flex:0 0 auto}
+.sim[open] summary,.sim details[open] summary{background:var(--accent-soft)}
+.sim .histlist{padding:8px 0 4px}
 .histlist{display:flex;flex-direction:column;gap:10px;padding-bottom:14px}
 .sit.undone{opacity:.6}
 .sit-q small{display:block;font-weight:400;font-size:12.5px;color:var(--muted)}
@@ -539,12 +541,13 @@ function ago(t){
   var h = Math.round(m / 60); return h < 24 ? 'il y a ' + h + ' h' : 'il y a ' + Math.round(h / 24) + ' j';
 }
 function histHTML(){
+  if (!S.hist.length) return '';
   var rows = S.hist.slice().reverse().map(function(e){
     return '<div class="sit' + (e.undone ? ' undone' : '') + '"><div class="sit-top"><span class="num">' + (S.hist.indexOf(e) + 1) + '</span><span class="sit-q">« ' + esc(e.q) + ' »<small>' + esc(ago(e.t)) + (e.undone ? ' · annulée' : '') + '</small></span></div>' +
       '<ul>' + (e.lines.length ? e.lines.map(function(l){ return '<li' + (l.miss ? ' class="miss"' : '') + '>' + esc(l.t) + '</li>'; }).join('') : '<li class="miss">Aucune modification</li>') + '</ul>' +
       (e.lines.length ? '<div class="sit-acts">' + (e.undone ? '<button class="btn sm" data-action="hist-redo" data-id="' + esc(e.id) + '">Rétablir</button>' : '<button class="btn sm" data-action="hist-undo" data-id="' + esc(e.id) + '">Revenir à avant</button>') + '</div>' : '') + '</div>';
   }).join('');
-  return '<section class="card sim"><details' + detailsAttr('hist') + '><summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Historique des demandes (' + S.hist.length + ')</summary><div class="histlist">' + (rows || '<p class="tiny" style="color:var(--muted)">Aucune demande pour le moment. Elles sont gardées 48 h et peuvent être annulées ici.</p>') + '</div></details></section>';
+  return '<section class="card sim"><details' + detailsAttr('hist') + '><summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Historique (' + S.hist.length + ')</summary><div class="histlist">' + (rows || '<p class="tiny" style="color:var(--muted)">Aucune demande pour le moment. Elles sont gardées 48 h et peuvent être annulées ici.</p>') + '</div></details></section>';
 }
 
 /* ---------- computations ---------- */
