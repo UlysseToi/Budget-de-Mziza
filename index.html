@@ -214,7 +214,11 @@ details>summary::-webkit-details-marker{display:none}
 .ask .mic.on{background:var(--accent);color:var(--accent-ink);animation:pulse 1.2s ease-in-out infinite}
 @keyframes pulse{50%{box-shadow:0 0 0 7px var(--accent-soft)}}
 @media (prefers-reduced-motion: reduce){.ask .mic.on{animation:none}}
-.sim{padding:16px;display:flex;flex-direction:column;gap:12px;border:2px solid var(--warn);background:linear-gradient(180deg,var(--surface),var(--warn-soft) 260%)}
+.sim{padding:4px 16px}
+.sim summary{padding:12px 0;font-weight:600;font-size:14px;color:var(--muted)}
+.histlist{display:flex;flex-direction:column;gap:10px;padding-bottom:14px}
+.sit.undone{opacity:.6}
+.sit-q small{display:block;font-weight:400;font-size:12.5px;color:var(--muted)}
 .sim h2{font:700 18px var(--font-display);color:var(--warn)}
 .sim .lead{font-size:13.5px;color:var(--muted)}
 .sit{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
@@ -364,7 +368,7 @@ var norm = function(s){ return String(s||'').toLowerCase().normalize('NFD').repl
 /* ---------- state ---------- */
 var S = {
   ready:false, mode:'db', cfg:{items:[],debts:[],startDate:todayISO()}, tx:[],
-  month: monthOf(todayISO()), tab:null, sim:[], realCfg:null, askQ:'', askOut:'', askBusy:false, askCtl:null, askAsked:'', confirm:null, played:false, open:{}, qa:'',
+  month: monthOf(todayISO()), tab:null, hist:[], askQ:'', askOut:'', askBusy:false, askCtl:null, askAsked:'', confirm:null, played:false, open:{}, qa:'',
   m:null, i:null, sk:null, gotCfg:false, gotTx:false, sample:null, canScan:false, undo:null, scanCtl:null
 };
 var db = null;
@@ -406,6 +410,9 @@ function removeTx(id){
 }
 function startDb(handle){
   db = handle; S.mode = 'db';
+  handle.collection('hist').onSnapshot(function(snap){
+    S.hist = snap.docs.map(function(d){ var o = JSON.parse(JSON.stringify(d.data())); o.id = d.id; return o; }); sortHist(); purgeHist(); render();
+  }, function(){});
   handle.doc('app/config').onSnapshot(function(snap){
     if (cfgPending > 0) return;
     if (snap.exists) { S.cfg = normCfg(snap.data()); }
@@ -416,14 +423,11 @@ function startDb(handle){
     S.gotTx = true; S.ready = S.gotCfg && S.gotTx; render();
   }, function(){ S.gotTx = true; S.ready = S.gotCfg && S.gotTx; render(); });
 }
-function startLocal(){ db = null; S.mode = 'local'; loadLocal(); S.ready = true; render(); }
+function startLocal(){ db = null; S.mode = 'local'; loadLocal(); loadHistLocal(); S.ready = true; render(); }
 
 
-/* ---------- simulation: Claude's changes are layered on top of the real data until validated ---------- */
-var SIM_KEY = 'budget-mziza-sim';
-function saveSim(){ try { localStorage.setItem(SIM_KEY, JSON.stringify(S.sim)); } catch(e){} }
-function loadSim(){ try { var a = JSON.parse(localStorage.getItem(SIM_KEY) || '[]'); S.sim = Array.isArray(a) ? a : []; } catch(e){ S.sim = []; } }
-function withCfg(cfg, fn){ var real = S.cfg; S.cfg = cfg; try { return fn(); } finally { S.cfg = real; } }
+/* ---------- requests to Claude are applied at once; every one is kept 48 h in a history ---------- */
+var HIST_KEY = 'budget-mziza-hist', HIST_TTL = 48 * 3600 * 1000;
 function findBy(list, t){
   t = String(t == null ? '' : t); var n = norm(t);
   return list.find(function(x){ return x.id === t; }) || list.find(function(x){ return norm(x.name) === n; }) ||
@@ -493,40 +497,53 @@ function cleanOps(raw){
     return c;
   });
 }
-function effCfg(){ var c = JSON.parse(JSON.stringify(S.cfg)); S.sim.forEach(function(it){ applyOps(c, it.ops); }); return c; }
-function metricsOf(cfg){
-  return withCfg(cfg, function(){
-    var infos = cfg.debts.map(dInfo), ds = dailyStats(nowMonth(), infos), ends = infos.map(endMonthOf).filter(Boolean);
-    return {income:planIncome(), fixed:planFixed(), debts:monthlyDebts(infos), left:round2(ds.left), end:ends.length ? maxStr(ends) : null};
-  });
+
+function snapCfg(){ return JSON.parse(JSON.stringify({items:S.cfg.items, debts:S.cfg.debts})); }
+function saveHistLocal(){ try { localStorage.setItem(HIST_KEY, JSON.stringify(S.hist)); } catch(e){} }
+function loadHistLocal(){ try { var a = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); S.hist = Array.isArray(a) ? a : []; } catch(e){ S.hist = []; } purgeHist(); }
+function persistHist(e){
+  if (!db) { saveHistLocal(); return; }
+  db.collection('hist').doc(e.id).set({q:e.q, t:e.t, lines:e.lines, before:e.before, after:e.after, undone:!!e.undone}).catch(function(){});
 }
-function simHTML(){
-  if (!S.sim.length) return '';
-  var A = metricsOf(S.realCfg || S.cfg), B = metricsOf(S.cfg);
-  var rowsM = [['Entrées par mois','income',1],['Charges fixes','fixed',-1],['Mensualités des dettes','debts',-1],['Disponible pour le quotidien','left',1]].filter(function(r){ return Math.abs(A[r[1]] - B[r[1]]) > 0.004; }).map(function(r){
-    var up = (B[r[1]] - A[r[1]]) * r[2] > 0;
-    return '<div><span>' + r[0] + '</span><span class="v ' + (up ? 'up' : 'down') + '">' + eur(A[r[1]]) + ' → ' + eur(B[r[1]]) + '</span></div>';
-  });
-  if (A.end !== B.end) rowsM.push('<div><span>Fin des dettes</span><span class="v">' + (A.end ? monthLabel(A.end) : '—') + ' → ' + (B.end ? monthLabel(B.end) : '—') + '</span></div>');
-  var its = S.sim.map(function(it, k){
-    return '<div class="sit"><div class="sit-top"><span class="num">' + (k + 1) + '</span><span class="sit-q">« ' + esc(it.q) + ' »</span></div>' +
-      '<ul>' + it.lines.map(function(l){ return '<li' + (l.miss ? ' class="miss"' : '') + '>' + esc(l.t) + '</li>'; }).join('') + '</ul>' +
-      '<div class="sit-acts"><button class="btn sm primary" data-action="sim-ok" data-id="' + esc(it.id) + '">Valider</button><button class="btn sm ghost" data-action="sim-no" data-id="' + esc(it.id) + '">Annuler</button></div></div>';
+function removeHist(id){
+  S.hist = S.hist.filter(function(x){ return x.id !== id; });
+  if (!db) saveHistLocal(); else db.collection('hist').doc(id).delete().catch(function(){});
+}
+function purgeHist(){
+  var lim = Date.now() - HIST_TTL;
+  S.hist.filter(function(e){ return e.t < lim; }).forEach(function(e){ removeHist(e.id); });
+}
+function sortHist(){ S.hist.sort(function(a, b){ return a.t - b.t; }); }
+function restoreSnap(snap){
+  S.cfg.items = JSON.parse(JSON.stringify(snap.items || [])); S.cfg.debts = JSON.parse(JSON.stringify(snap.debts || []));
+  persistCfg();
+}
+function revertTo(e){
+  var k = S.hist.indexOf(e); if (k < 0) return;
+  restoreSnap(e.before);
+  S.hist.forEach(function(x, j){ if (j >= k && !x.undone) { x.undone = true; persistHist(x); } });
+  render(); toast('Retour à avant : « ' + e.q.slice(0, 40) + (e.q.length > 40 ? '…' : '') + ' »');
+}
+function redoTo(e){
+  var k = S.hist.indexOf(e); if (k < 0) return;
+  restoreSnap(e.after);
+  S.hist.forEach(function(x, j){ if (j <= k && x.undone) { x.undone = false; persistHist(x); } });
+  render(); toast('Demande rétablie');
+}
+function ago(t){
+  var m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (m < 1) return 'à l\'instant'; if (m < 60) return 'il y a ' + m + ' min';
+  var h = Math.round(m / 60); return h < 24 ? 'il y a ' + h + ' h' : 'il y a ' + Math.round(h / 24) + ' j';
+}
+function histHTML(){
+  if (!S.hist.length) return '';
+  var rows = S.hist.slice().reverse().map(function(e){
+    return '<div class="sit' + (e.undone ? ' undone' : '') + '"><div class="sit-top"><span class="num">' + (S.hist.indexOf(e) + 1) + '</span><span class="sit-q">« ' + esc(e.q) + ' »<small>' + esc(ago(e.t)) + (e.undone ? ' · annulée' : '') + '</small></span></div>' +
+      '<ul>' + (e.lines.length ? e.lines.map(function(l){ return '<li' + (l.miss ? ' class="miss"' : '') + '>' + esc(l.t) + '</li>'; }).join('') : '<li class="miss">Aucune modification</li>') + '</ul>' +
+      (e.lines.length ? '<div class="sit-acts">' + (e.undone ? '<button class="btn sm" data-action="hist-redo" data-id="' + esc(e.id) + '">Rétablir</button>' : '<button class="btn sm" data-action="hist-undo" data-id="' + esc(e.id) + '">Revenir à avant</button>') + '</div>' : '') + '</div>';
   }).join('');
-  return '<section class="card sim" aria-label="Simulation en cours"><div><h2>Simulation en cours</h2><p class="lead">Les chiffres de l\'application tiennent compte de ces essais. Rien n\'est enregistré tant que vous ne validez pas.</p></div>' + its +
-    '<div class="impact"><h3>Effet sur le budget</h3>' + (rowsM.length ? rowsM.join('') : '<div><span>Aucun effet sur les totaux</span></div>') + '</div>' +
-    '<div class="sim-foot"><button class="btn primary" data-action="sim-ok-all">Tout valider</button><button class="btn" data-action="sim-no-all">Tout annuler</button></div></section>';
+  return '<section class="card sim"><details' + detailsAttr('hist') + '><summary>Historique des demandes (' + S.hist.length + ') · gardé 48 h</summary><div class="histlist">' + rows + '</div></details></section>';
 }
-function simOk(id){
-  var list = id ? S.sim.filter(function(x){ return x.id === id; }) : S.sim.slice();
-  if (!list.length) return;
-  list.forEach(function(it){ applyOps(S.cfg, it.ops); });
-  S.sim = S.sim.filter(function(x){ return list.indexOf(x) < 0; });
-  persistCfg(); saveSim(); render();
-  toast(list.length > 1 ? 'Modifications enregistrées pour tous' : 'Modification enregistrée pour tous');
-}
-function simNo(id){ S.sim = id ? S.sim.filter(function(x){ return x.id !== id; }) : []; saveSim(); render(); toast(id ? 'Essai annulé' : 'Simulation annulée'); }
-function simBlock(){ if (S.sim.length) { toast('Validez ou annulez la simulation avant de modifier le budget à la main.'); return true; } return false; }
 
 /* ---------- computations ---------- */
 function nowMonth(){ return monthOf(todayISO()); }
@@ -882,7 +899,7 @@ function askHTML(){
   var card = '';
   if (S.askAsked) {
     card = '<section class="card ans"><p class="q">' + esc(S.askAsked) + '</p><div class="a" id="ask-out">' + (S.askOut ? fmtAns(S.askOut) : '<span class="tiny">Claude réfléchit…</span>') + '</div>' +
-      '<div class="foot"><span class="tiny">Les modifications demandées apparaissent dans la simulation.</span>' +
+      '<div class="foot"><span class="tiny">Les modifications sont appliquées tout de suite. Elles sont annulables dans l\'historique.</span>' +
       (S.askBusy ? '<button class="btn sm" data-action="ask-stop">Arrêter</button>' : '<button class="btn sm ghost" data-action="ask-close">Fermer</button>') + '</div></section>';
   }
   return bar + card;
@@ -905,16 +922,14 @@ function view(){
   if (!S.cfg.items.length && !S.cfg.debts.length) return head + banner + emptyBudget();
   var infos = S.cfg.debts.map(dInfo);
   var panel = S.tab === 'debts' ? debtsPanel(infos) : S.tab === 'fixed' ? fixedPanel() : S.tab === 'daily' ? dailyPanel(infos) : S.tab === 'income' ? incomePanel() : '';
-  return head + banner + (S.sample ? askHTML() : '') + simHTML() + heroHTML(infos) + tabsHTML(infos) + (panel ? '<div class="panel" role="tabpanel">' + panel + '</div>' : '') + (S.tab ? '' : chartHTML(infos) + installHTML());
+  return head + banner + (S.sample ? askHTML() : '') + histHTML() + heroHTML(infos) + tabsHTML(infos) + (panel ? '<div class="panel" role="tabpanel">' + panel + '</div>' : '') + (S.tab ? '' : chartHTML(infos) + installHTML());
 }
 function render(){
   var app = $('#app');
   var act = document.activeElement, key = act && act.dataset ? act.dataset.k : null;
   var hadText = act && (act.id === 'qa-text' || act.id === 'ask-text');
   var sy = window.scrollY;
-  var html;
-  if (S.sim.length) { var realC = S.cfg; S.realCfg = realC; S.cfg = effCfg(); try { html = view(); } finally { S.cfg = realC; } } else { S.realCfg = null; html = view(); }
-  app.innerHTML = html;
+  app.innerHTML = view();
   if (key) {
     var n = app.querySelector('[data-k="' + key + '"]');
     if (n) { n.focus({preventScroll:true}); if (hadText && n.setSelectionRange) { var L = n.value.length; n.setSelectionRange(L, L); } }
@@ -934,7 +949,7 @@ function toast(msg, undo){
   var t = $('#toast'); S.undo = undo || null;
   t.innerHTML = '<span>' + esc(msg) + '</span>' + (undo ? '<button class="tbtn" data-action="toast-undo">Annuler</button>' : '');
   t.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(function(){ t.hidden = true; S.undo = null; }, undo ? 7000 : 3400);
+  clearTimeout(toastTimer); toastTimer = setTimeout(function(){ t.hidden = true; S.undo = null; }, undo || msg.length > 70 ? 7000 : 3400);
 }
 
 /* ---------- quick add: text, receipt ---------- */
@@ -1044,25 +1059,37 @@ async function handleScan(file){
 
 /* ---------- smart bar: ask Claude ---------- */
 function budgetContext(){
-  var cfg = S.sim.length ? effCfg() : S.cfg;
-  return withCfg(cfg, function(){
-    var infos = cfg.debts.map(dInfo), ds = dailyStats(nowMonth(), infos);
-    var inc = itemsOf('income'), fx = itemsOf('fixed');
-    return JSON.stringify({
-      entrees_par_mois: inc.map(function(i){ return {id:i.id, nom:i.name, montant:+i.amount || 0}; }),
-      charges_fixes_par_mois: fx.map(function(i){ return {id:i.id, nom:i.name, montant:+i.amount || 0}; }),
-      dettes: infos.map(function(i){ return {id:i.d.id, nom:i.d.name, dette_de_depart:i.start, reste:i.rem, mensualite:i.mo}; }),
-      budget_quotidien_par_mois: itemsOf('variable').map(function(i){ return {id:i.id, nom:i.name, active:isOn(i), part_pourcent:+i.amount || 0, budget:ds.bud[i.id] || 0}; }),
-      totaux: {entrees:planIncome(), charges_fixes:planFixed(), mensualites_dettes:monthlyDebts(infos), disponible_pour_le_quotidien:round2(ds.left)}
-    });
+  var cfg = S.cfg;
+  var infos = cfg.debts.map(dInfo), ds = dailyStats(nowMonth(), infos);
+  var inc = itemsOf('income'), fx = itemsOf('fixed');
+  var act = S.hist.filter(function(e){ return !e.undone; });
+  return JSON.stringify({
+    entrees_par_mois: inc.map(function(i){ return {id:i.id, nom:i.name, montant:+i.amount || 0}; }),
+    charges_fixes_par_mois: fx.map(function(i){ return {id:i.id, nom:i.name, montant:+i.amount || 0}; }),
+    dettes: infos.map(function(i){ return {id:i.d.id, nom:i.d.name, dette_de_depart:i.start, reste:i.rem, mensualite:i.mo}; }),
+    budget_quotidien_par_mois: itemsOf('variable').map(function(i){ return {id:i.id, nom:i.name, active:isOn(i), part_pourcent:+i.amount || 0, budget:ds.bud[i.id] || 0}; }),
+    totaux: {entrees:planIncome(), charges_fixes:planFixed(), mensualites_dettes:monthlyDebts(infos), disponible_pour_le_quotidien:round2(ds.left)},
+    historique_des_demandes_actives: act.slice(-8).map(function(e, k){ return {rang_depuis_la_derniere:act.slice(-8).length - k, demande:e.q, modifications:e.lines.map(function(l){ return l.t; })}; })
   });
+}
+function micHint(){
+  var ua = navigator.userAgent || '';
+  if (/Windows/i.test(ua)) return 'Dictée du navigateur bloquée ici. Dans le champ, appuyez sur les touches Windows + H pour dicter.';
+  if (/iPhone|iPad|iPod/i.test(ua)) return 'Touchez le micro en bas à droite du clavier iPhone pour dicter.';
+  if (/Android/i.test(ua)) return 'Touchez le micro du clavier de votre téléphone pour dicter.';
+  if (/Macintosh|Mac OS/i.test(ua)) return 'Dictée du navigateur bloquée ici. Appuyez deux fois sur la touche Fn (ou le micro) pour dicter.';
+  return 'Dictée du navigateur bloquée ici : utilisez la dictée de votre système.';
+}
+function fallbackMic(){
+  var el = $('#ask-text'); if (el) el.focus();
+  toast(micHint());
 }
 function startMic(){
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { toast('Dictée vocale indisponible ici : utilisez le micro du clavier de votre téléphone.'); return; }
+  if (!SR) { fallbackMic(); return; }
   if (S.rec) { try { S.rec.stop(); } catch(e){} return; }
   var r, heard = '', failed = false;
-  try { r = new SR(); r.lang = 'fr-FR'; r.interimResults = true; r.continuous = false; } catch(e) { toast('Dictée vocale indisponible ici : utilisez le micro du clavier.'); return; }
+  try { r = new SR(); r.lang = 'fr-FR'; r.interimResults = true; r.continuous = false; } catch(e) { fallbackMic(); return; }
   S.rec = r; S.listening = true; render();
   r.onresult = function(e){
     var t = ''; for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
@@ -1070,24 +1097,25 @@ function startMic(){
   };
   r.onerror = function(e){
     failed = true;
-    toast(e.error === 'not-allowed' || e.error === 'service-not-allowed' ? 'Micro non autorisé dans cette page : utilisez le micro du clavier.' : e.error === 'no-speech' ? 'Je n\'ai rien entendu, réessayez.' : 'Dictée impossible, réessayez ou utilisez le micro du clavier.');
+    toast(e.error === 'not-allowed' || e.error === 'service-not-allowed' ? micHint() : e.error === 'no-speech' ? 'Je n\'ai rien entendu, réessayez.' : 'Dictée impossible, réessayez ou utilisez le micro du clavier.');
   };
   r.onend = function(){
     S.rec = null; S.listening = false;
     if (!failed && heard.trim() && S.sample) askClaude(heard); else render();
   };
-  try { r.start(); } catch(e) { S.rec = null; S.listening = false; render(); toast('Dictée impossible ici : utilisez le micro du clavier.'); }
+  try { r.start(); } catch(e) { S.rec = null; S.listening = false; render(); fallbackMic(); }
 }
 async function askClaude(q){
   q = (q || '').trim();
   if (!q || !S.sample || S.askBusy) return;
   var ctl = new AbortController(); S.askCtl = ctl; S.askBusy = true; S.askAsked = q; S.askOut = ''; S.askQ = '';
   render();
-  var prompt = 'Tu es l\'assistant du budget familial de M\'ziza (France, montants en euros par mois). Voici l\'état actuel (simulation en cours comprise) au format JSON :\n' + budgetContext() +
+  var prompt = 'Tu es l\'assistant du budget familial de M\'ziza (France, montants en euros par mois). Voici l\'état actuel au format JSON :\n' + budgetContext() +
     '\n\nDemande de l\'utilisatrice : "' + q.replace(/"/g, "'") + '"\n\n' +
-    'Réponds UNIQUEMENT par un objet JSON {"reponse": "...", "changes": [...]}.\n' +
-    '- "reponse" : français simple, 50 à 120 mots, sans markdown : ce que tu as modifié, ou la réponse à la question.\n' +
-    '- "changes" : modifications à appliquer dans l\'application. Remplis-la quand la demande est une instruction ou une hypothèse à simuler (« ajoute », « mets », « supprime », « et si Andreia donne 50 € »). Pour une simple question de calcul (« combien faudrait-il… »), laisse-la vide et réponds par le calcul (entrées − charges fixes − mensualités = disponible pour le quotidien) ; en cas de déficit, indique d\'abord l\'aide supplémentaire nécessaire, puis de combien renégocier les mensualités dette par dette, et propose d\'appliquer ces pistes en simulation.\n' +
+    'Réponds UNIQUEMENT par un objet JSON {"reponse": "...", "changes": [...], "annuler": null}.\n' +
+    '- "reponse" : français simple, 40 à 110 mots, sans markdown : ce que tu as modifié, ou la réponse à la question.\n' +
+    '- "changes" : modifications appliquées IMMÉDIATEMENT dans l\'application. Remplis-la dès que la demande est une instruction (« ajoute », « mets », « supprime », « et si Andreia donne 50 € ») ; ces changements seront enregistrés dans un historique que l\'utilisatrice peut annuler. Pour une simple question de calcul (« combien faudrait-il… »), laisse-la vide et réponds par le calcul (entrées − charges fixes − mensualités = disponible pour le quotidien) ; en cas de déficit, indique d\'abord l\'aide supplémentaire nécessaire, puis de combien renégocier les mensualités dette par dette, et propose d\'appliquer ces pistes.\n' +
+    '- "annuler" : si elle demande d\'annuler une ou plusieurs demandes précédentes (« annule », « reviens en arrière », « annule les deux dernières »), mets le nombre de demandes à annuler en partant de la dernière (nombre entier), ou "toutes" ; sinon null. Dans ce cas "changes" reste vide.\n' +
     'Formes possibles d\'une modification (target = id ou nom exact) :\n' +
     '{"op":"set_amount","target":"...","amount":N} entrée d\'argent ou charge fixe\n' +
     '{"op":"add_item","type":"income|fixed","name":"...","amount":N,"group":"salary|family|other"}\n' +
@@ -1100,10 +1128,18 @@ async function askClaude(q){
   try {
     var r = await S.sample.json(prompt, {modelTier:'default', signal:ctl.signal, cache:false});
     var ops = cleanOps(r && r.changes), text = String((r && r.reponse) || '').trim();
-    if (ops.length) {
-      var lines = applyOps(JSON.parse(JSON.stringify(effCfg())), ops);
-      S.sim.push({id:'s-' + uid(), q:q, ops:ops, lines:lines, t:Date.now()}); saveSim();
-      text = (text || 'Modification ajoutée à la simulation.') + '\n\n' + (ops.length > 1 ? ops.length + ' modifications ajoutées' : 'Modification ajoutée') + ' à la simulation. Validez-les ou annulez-les en haut de la page.';
+    var act = S.hist.filter(function(e){ return !e.undone; });
+    if (r && r.annuler != null && r.annuler !== false) {
+      var n = r.annuler === 'toutes' ? act.length : Math.max(1, Math.min(act.length, parseInt(r.annuler, 10) || 1));
+      if (!act.length) { text = 'Il n\'y a aucune demande à annuler.'; }
+      else { var target = act[act.length - n]; revertTo(target); text = (text || 'C\'est annulé.') + '\n\n' + (n > 1 ? n + ' demandes annulées' : 'Demande annulée') + ' : retour à avant « ' + target.q.slice(0, 50) + ' ».'; }
+    } else if (ops.length) {
+      S.hist.filter(function(e){ return e.undone; }).forEach(function(e){ removeHist(e.id); });
+      var before = snapCfg(), lines = applyOps(S.cfg, ops);
+      persistCfg();
+      var e = {id:'h-' + uid(), q:q, t:Date.now(), lines:lines, before:before, after:snapCfg(), undone:false};
+      S.hist.push(e); persistHist(e);
+      text = (text || 'C\'est fait.') + '\n\nAppliqué tout de suite. Vous pouvez revenir en arrière dans l\'historique.';
     }
     S.askOut = text || 'Je n\'ai rien à modifier pour cette demande.';
   } catch(e) {
@@ -1260,11 +1296,8 @@ document.addEventListener('click', function(e){
   if (a === 'close') return closeModal();
   if (a === 'tab') { S.tab = S.tab === el.dataset.tab ? null : el.dataset.tab; render(); return; }
   if (a === 'mic') { startMic(); return; }
-  if (a === 'sim-ok') return simOk(el.dataset.id);
-  if (a === 'sim-no') return simNo(el.dataset.id);
-  if (a === 'sim-ok-all') return simOk();
-  if (a === 'sim-no-all') return simNo();
-  if ((a === 'add-item' || a === 'edit-item' || a === 'open-skip' || a === 'scan-pick' || a === 'open-move' || a === 'quick') && simBlock()) return;
+  if (a === 'hist-undo') { var he = S.hist.find(function(x){ return x.id === el.dataset.id; }); if (he) revertTo(he); return; }
+  if (a === 'hist-redo') { var hr = S.hist.find(function(x){ return x.id === el.dataset.id; }); if (hr) redoTo(hr); return; }
   if (a === 'home') { S.tab = null; render(); window.scrollTo({top:0}); return; }
   if (a === 'ask-close') { S.askAsked = ''; S.askOut = ''; render(); return; }
   if (a === 'ask-stop') { if (S.askCtl) S.askCtl.abort(); return; }
@@ -1306,7 +1339,7 @@ document.addEventListener('submit', function(e){
   if (k === 'move' && S.m) submitMove();
   else if (k === 'item' && S.i) submitItem(f);
   else if (k === 'skip' && S.sk) submitSkip();
-  else if (k === 'qa') { if (!simBlock()) quickAdd(S.qa); }
+  else if (k === 'qa') quickAdd(S.qa);
   else if (k === 'ask') askClaude(S.askQ);
 });
 document.addEventListener('input', function(e){
@@ -1322,7 +1355,6 @@ document.addEventListener('input', function(e){
 document.addEventListener('change', function(e){
   var id = e.target.id;
   if (e.target.dataset && e.target.dataset.toggle) {
-    if (S.sim.length) { e.target.checked = !e.target.checked; simBlock(); return; }
     var ci = S.cfg.items.find(function(x){ return x.id === e.target.dataset.toggle; });
     if (ci) { if (e.target.checked) delete ci.active; else ci.active = false; persistCfg(); render(); }
     return;
@@ -1344,7 +1376,6 @@ window.addEventListener('resize', function(){
 });
 
 /* ---------- boot ---------- */
-loadSim();
 render();
 var claudeApi = window.claude && window.claude.use ? window.claude : null;
 if (claudeApi) {
