@@ -412,6 +412,32 @@ header.top h1{font-size:inherit}h1 .home:focus-visible{outline:2px solid var(--a
 .fs-leg{padding:8px 16px 0;display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--muted)}
 .fs-leg span{display:inline-flex;align-items:center;gap:6px}
 .fs-leg i{width:12px;height:12px;border-radius:50%;display:inline-block}
+/* "Ce mois-ci" card + overdraft */
+.mcard{padding:18px 20px;display:flex;flex-direction:column;gap:10px}
+.mhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.mhead h2{font:700 18px var(--font-display)}
+.mhead span{color:var(--muted);font-size:13.5px;text-transform:capitalize}
+.mlines{display:flex;flex-direction:column}
+.ml{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:7px 0;border-top:1px solid var(--line);font-size:14.5px}
+.ml:first-child{border-top:0}
+.ml b{font:600 16px var(--font-display);font-variant-numeric:tabular-nums;white-space:nowrap}
+.ml.up b{color:var(--accent)}
+.ml.sub{font-weight:600}
+.ml.sub b{font-weight:700}
+.ml.bad b{color:var(--bad)}
+button.ml{all:unset;display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:7px 0;border-top:1px solid var(--line);font-size:14.5px;cursor:pointer}
+button.ml.od b{color:var(--bad)}
+button.ml.od small{font-size:12px;color:var(--accent);font-weight:600;margin-left:6px}
+button.ml.add span{color:var(--accent);font-weight:600}
+button.ml:hover{background:var(--surface-2)}
+button.ml:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mtotal{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;background:var(--accent-soft)}
+.mtotal span{font-weight:600}
+.mtotal b{font:800 26px var(--font-display);font-variant-numeric:tabular-nums;color:var(--accent);white-space:nowrap}
+.mtotal.bad{background:var(--bad-soft)}
+.mtotal.bad b,.mtotal.bad span{color:var(--bad)}
+.odbar{display:flex;justify-content:space-between;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:10px 14px;border-radius:14px;background:var(--surface);border:1px solid var(--line);font-size:14px}
+.odbar b{color:var(--bad)}
 /* fixed charges: search + drag to reorder */
 .fsearch{display:flex;align-items:center;gap:8px;margin:0 16px 12px;padding:4px 12px;border:1.5px solid var(--line);border-radius:14px;background:var(--surface-2)}
 .fsearch:focus-within{border-color:var(--accent)}
@@ -488,6 +514,7 @@ function normCfg(d){
   c.items = Array.isArray(c.items) ? c.items : [];
   c.debts = Array.isArray(c.debts) ? c.debts : [];
   c.startDate = c.startDate || todayISO();
+  c.od = c.od && typeof c.od === 'object' ? c.od : {};
   return c;
 }
 
@@ -750,7 +777,7 @@ function dailyStats(m, infos){
   itemsOf('fixed').forEach(function(i){ fixedIds[i.id] = true; });
   var dayTx = txMonth(m).filter(function(t){ return t.kind === 'expense' && !fixedIds[t.ref]; });
   var rDay = sum(dayTx, function(t){ return +t.amount || 0; });
-  var left = planIncome() - planFixed() - monthlyDebts(infos);
+  var left = planIncome() - planFixed() - monthlyDebts(infos) - odOf(m);
   var bud = dailyBudgets(left);
   var env = sum(Object.keys(bud), function(k){ return bud[k]; });
   return {items:items, dayTx:dayTx, rDay:rDay, env:env, left:left, bud:bud, base:env > 0 ? env : Math.max(0, left)};
@@ -817,6 +844,42 @@ function heroHTML(infos){
     '<div class="hero-main"><p class="eyebrow">Il reste à rembourser</p><p class="big">' + eur(rem) + '</p>' +
     '<dl class="pair"><div><dt>Déjà remboursé</dt><dd>' + eur(paid) + '</dd></div><div><dt>Dette de départ</dt><dd>' + eur(start) + '</dd></div><div><dt>Par mois</dt><dd>' + eur(monthlyDebts(infos)) + '</dd></div></dl>' +
     '<p class="eta">' + esc(etaText(infos)) + '</p></div></section>';
+}
+
+/* overdraft at the start of a month (stored per month in cfg.od): it is taken out of that month's money */
+function odOf(m){ return Math.max(0, +((S.cfg.od || {})[m]) || 0); }
+function monthCardHTML(infos){
+  var m = nowMonth(), ds = dailyStats(m, infos), od = odOf(m), rest = round2(ds.left - ds.rDay);
+  var line = function(label, v, cls){ return '<div class="ml' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span><b>' + v + '</b></div>'; };
+  return '<section class="card mcard" aria-label="Ce mois-ci"><div class="mhead"><h2>Ce mois-ci</h2><span>' + esc(monthLabel(m)) + '</span></div>' +
+    '<div class="mlines">' +
+    line('Entrées d\'argent', '+ ' + esc(eur(planIncome())), 'up') +
+    line('Charges fixes', '− ' + esc(eur(planFixed()))) +
+    line('Dettes', '− ' + esc(eur(monthlyDebts(infos)))) +
+    (od ? '<button class="ml od" data-action="od-edit" data-m="' + m + '" data-k="od-h"><span>Découvert à combler <small>modifier</small></span><b>− ' + esc(eur(od)) + '</b></button>' :
+      '<button class="ml od add" data-action="od-edit" data-m="' + m + '" data-k="od-h"><span>+ Indiquer un découvert</span><b></b></button>') +
+    line('Pour le quotidien', esc(eur(ds.left)), 'sub' + (ds.left < 0 ? ' bad' : '')) +
+    line('Déjà dépensé', '− ' + esc(eur(ds.rDay))) +
+    '</div><div class="mtotal' + (rest < 0 ? ' bad' : '') + '"><span>' + (rest < 0 ? 'Il manque pour finir le mois' : 'Il reste pour finir le mois') + '</span><b>' + esc(eur(Math.abs(rest))) + '</b></div></section>';
+}
+function openOd(m){
+  S.od = {m:m};
+  var v = odOf(m);
+  showModal('<h2>Découvert</h2><p class="lead">Montant du découvert au début de ' + esc(monthLabel(m)) + ', tel qu\'il apparaît sur le compte. Il est retiré de l\'argent du quotidien de ce mois.</p>' +
+    '<form data-form="od" novalidate style="display:flex;flex-direction:column;gap:14px"><div class="field"><label for="od-amount">Découvert (€)</label><input id="od-amount" name="amount" inputmode="decimal" autocomplete="off" value="' + (v ? esc(fmtIn(v)) : '') + '" placeholder="ex. 400"></div>' +
+    '<p class="err" id="od-err" role="alert"></p><div class="foot">' + (v ? '<button type="button" class="btn danger" data-action="od-clear">Plus de découvert</button><span class="spacer"></span>' : '') +
+    '<button type="button" class="btn" data-action="close">Annuler</button><button type="submit" class="btn primary">Enregistrer</button></div></form>', '#od-amount');
+}
+function saveOd(m, v){
+  S.cfg.od = Object.assign({}, S.cfg.od || {});
+  if (v > 0) S.cfg.od[m] = round2(v); else delete S.cfg.od[m];
+  persistCfg(); closeModal(); render();
+  toast(v > 0 ? 'Découvert de ' + eur(v) + ' enregistré pour ' + monthLabel(m) : 'Découvert retiré pour ' + monthLabel(m));
+}
+function submitOd(form){
+  var raw = form.elements.amount.value.replace(/[−-]/g, '').trim(), v = raw === '' ? 0 : parseAmt(raw);
+  if (!(v >= 0)) { $('#od-err').textContent = 'Indiquez un montant, par exemple 400.'; return; }
+  saveOd(S.od.m, v);
 }
 
 function chartSVG(cd, W){
@@ -1120,9 +1183,9 @@ function dailyPanel(infos){
   var m = S.month, ds = dailyStats(m, infos);
   var rows = ds.items.map(function(it, idx){ return {id:it.id, name:it.name, plan:ds.bud[it.id] || 0, real:realRef(it.id, m), color:colorOf(idx), active:isOn(it)}; });
   var orphan = round2(ds.rDay - sum(rows, function(r){ return r.real; }));
-  var remain = ds.base - ds.rDay;
+  var remain = (ds.env > 0 ? ds.env : ds.left) - ds.rDay, od = odOf(m);
   var cells = [
-    ['Budget du mois', eur(ds.base), 'entrées − charges − dettes'],
+    ['Budget du mois', eur(ds.base), 'entrées − charges − dettes' + (od ? ' − découvert' : '')],
     ['Dépensé', eur(ds.rDay), 'en ' + monthLabel(m)],
     ['Il reste', eur(remain), remain < 0 ? 'budget dépassé' : 'à dépenser ce mois-ci', remain < 0]
   ];
@@ -1132,7 +1195,7 @@ function dailyPanel(infos){
     (S.canScan ? '<div class="scan"><button type="button" class="btn" data-action="scan-pick" data-k="scan-pick">Scanner un ticket de caisse</button><input id="scan-file" type="file" accept="image/*" hidden></div>' : '') +
     '</section>';
   var note;
-  if (ds.env <= 0) note = '<p class="dnote bad">Rien à répartir : les entrées ne couvrent pas les charges fixes et les dettes' + (ds.left < 0 ? ' (il manque ' + eur(-ds.left) + ')' : '') + '.</p>';
+  if (ds.env <= 0) note = '<p class="dnote bad">Rien à répartir : les entrées ne couvrent pas les charges fixes, les dettes' + (od ? ' et le découvert' : '') + (ds.left < 0 ? ' (il manque ' + eur(-ds.left) + ')' : '') + '.</p>';
   else if (!rows.some(function(r){ return r.active; })) note = '<p class="dnote">Cochez au moins une catégorie.</p>';
   else note = '<p class="dnote">Les ' + eur(ds.env) + ' disponibles sont répartis entre les catégories cochées. Décochez-en une : le reste se recalcule.</p>';
   var plans = rows.filter(function(r){ return r.active && r.plan > 0; });
@@ -1142,7 +1205,9 @@ function dailyPanel(infos){
     '<p class="dnote">Touchez un montant pour changer le budget de la catégorie, en euros.</p></section>';
   var list = '<section class="card sec"><div class="sec-head"><div class="left"><h3>Dépenses du mois</h3><span class="tot">' + ds.dayTx.length + ' enregistrée' + (ds.dayTx.length > 1 ? 's' : '') + '</span></div></div>' +
     (ds.dayTx.length ? mvRows(sortDesc(ds.dayTx)) : '<div class="empty-row">Aucune dépense en ' + esc(monthLabel(m)) + '.</div>') + '</section>';
-  return monthNav() + strip(cells) + qa + card + list;
+  var odRow = '<div class="odbar"><span>' + (od ? 'Découvert au début du mois : <b>' + esc(eur(od)) + '</b>' : 'Pas de découvert indiqué pour ce mois.') + '</span>' +
+    '<button class="btn sm" data-action="od-edit" data-m="' + m + '" data-k="od-d">' + (od ? 'Modifier' : 'Indiquer un découvert') + '</button></div>';
+  return monthNav() + strip(cells) + odRow + qa + card + list;
 }
 
 /* ---------- Entrées d'argent tab ---------- */
@@ -1207,7 +1272,7 @@ function view(){
     var panel = S.tab === 'debts' ? debtsPanel(infos) : S.tab === 'fixed' ? fixedPanel() : S.tab === 'daily' ? dailyPanel(infos) : incomePanel();
     return top + pageHead(S.tab) + '<div class="panel">' + panel + '</div>';
   }
-  return top + heroHTML(infos) + tabsHTML(infos) + chartHTML(infos) + installHTML();
+  return top + heroHTML(infos) + monthCardHTML(infos) + tabsHTML(infos) + chartHTML(infos) + installHTML();
 }
 function render(){
   var app = $('#app');
@@ -1230,7 +1295,7 @@ function showModal(inner, focusSel, cls){
   var f = focusSel && $('#modal').querySelector(focusSel);
   if (f) setTimeout(function(){ f.focus(); }, 30);
 }
-function closeModal(){ $('#modal').innerHTML = ''; document.body.classList.remove('lock'); S.m = S.i = S.sk = S.debt = S.pend = S.fs = null; S.hm = S.docOpen = false; }
+function closeModal(){ $('#modal').innerHTML = ''; document.body.classList.remove('lock'); S.m = S.i = S.sk = S.debt = S.pend = S.fs = S.od = null; S.hm = S.docOpen = false; }
 function busyModal(){ return !!(S.scanCtl || S.askBusy); }
 var toastTimer;
 function toast(msg, undo){
@@ -1519,7 +1584,7 @@ function budgetContext(){
     charges_fixes_par_mois: fx.map(function(i){ return {id:i.id, nom:i.name, montant:+i.amount || 0}; }),
     dettes: infos.map(function(i){ return {id:i.d.id, nom:i.d.name, dette_de_depart:i.start, reste:i.rem, mensualite:i.mo}; }),
     budget_quotidien_par_mois: itemsOf('variable').map(function(i){ return {id:i.id, nom:i.name, active:isOn(i), part_pourcent:Math.round(+i.amount || 0), budget:ds.bud[i.id] || 0}; }),
-    totaux: {entrees:planIncome(), charges_fixes:planFixed(), mensualites_dettes:monthlyDebts(infos), disponible_pour_le_quotidien:round2(ds.left)},
+    totaux: {entrees:planIncome(), charges_fixes:planFixed(), mensualites_dettes:monthlyDebts(infos), decouvert_a_combler_ce_mois:odOf(nowMonth()), disponible_pour_le_quotidien:round2(ds.left), deja_depense_ce_mois:round2(ds.rDay)},
     historique_des_demandes_actives: act.slice(-8).map(function(e, k){ return {rang_depuis_la_derniere:act.slice(-8).length - k, demande:e.q, modifications:e.lines.map(function(l){ return l.t; })}; })
   });
 }
@@ -1609,7 +1674,7 @@ var OPS_HELP =
 /* money left for daily spending with a given config */
 function dispoOf(cfg){
   var keep = S.cfg; S.cfg = cfg;
-  try { return round2(planIncome() - planFixed() - monthlyDebts(cfg.debts.map(dInfo))); } finally { S.cfg = keep; }
+  try { return round2(planIncome() - planFixed() - monthlyDebts(cfg.debts.map(dInfo)) - odOf(nowMonth())); } finally { S.cfg = keep; }
 }
 function propHTML(P){
   var lis = function(lines){ return '<ul>' + lines.map(function(l){ return '<li' + (l.miss ? ' class="miss"' : '') + '>' + esc(l.t) + '</li>'; }).join('') + '</ul>'; };
@@ -1856,6 +1921,8 @@ document.addEventListener('click', function(e){
   if (a === 'fs-pt') { if (!S.fs) return; S.fs.sel = +el.dataset.i; renderFs('keep'); return; }
   if (a === 'edit-debt') return openDebt(el.dataset.id);
   if (a === 'add-debt') return openDebt(null);
+  if (a === 'od-edit') return openOd(el.dataset.m || nowMonth());
+  if (a === 'od-clear') { if (S.od) saveOd(S.od.m, 0); return; }
   if (a === 'del-debt') {
     if (!el.dataset.armed) { el.dataset.armed = '1'; el.classList.add('armed'); el.textContent = 'Confirmer la suppression'; return; }
     var did = S.debt && S.debt.id; S.cfg.debts = S.cfg.debts.filter(function(x){ return x.id !== did; });
@@ -1983,6 +2050,7 @@ document.addEventListener('submit', function(e){
   else if (k === 'item' && S.i) submitItem(f);
   else if (k === 'skip' && S.sk) submitSkip();
   else if (k === 'debt' && S.debt) submitDebt(f);
+  else if (k === 'od' && S.od) submitOd(f);
   else if (k === 'qa') quickAdd(S.qa);
   else if (k === 'ask') askClaude(S.askQ);
 });
