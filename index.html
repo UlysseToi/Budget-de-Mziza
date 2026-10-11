@@ -362,6 +362,7 @@ header.top h1{font-size:inherit}h1 .home:focus-visible{outline:2px solid var(--a
 .histpill:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .histpill svg{width:14px;height:14px;flex:0 0 auto}
 .sheet.wide{max-width:560px}
+.hclear{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding-top:12px;border-top:1px solid var(--line)}
 .shead{position:sticky;top:-22px;z-index:2;background:var(--surface);margin:-22px -22px 0;padding:18px 22px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px solid var(--line)}
 .sit .st{font-weight:600;color:var(--warn)}
 .sit .ans-t{font-size:13.5px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
@@ -733,7 +734,9 @@ function histModalHTML(){
   }).join('');
   return '<div class="shead"><h2>Historique</h2><button type="button" class="btn sm" data-action="close">Fermer</button></div>' +
     '<p class="lead">Toutes les demandes faites à Claude, les plus récentes en premier. Elles sont gardées 30 jours.</p>' +
-    '<div class="histlist">' + (rows || '<p class="lead">Aucune demande pour le moment.</p>') + '</div>';
+    '<div class="histlist">' + (rows || '<p class="lead">Aucune demande pour le moment.</p>') + '</div>' +
+    (S.hist.length ? '<div class="hclear"><button type="button" class="btn danger" data-action="hist-clear">Supprimer l\'historique</button>' +
+      '<p class="dnote">Les modifications déjà faites restent en place ; on ne pourra simplement plus les annuler d\'ici.</p></div>' : '');
 }
 function openHist(){ showModal(histModalHTML(), null, 'wide'); S.hm = true; }
 function refreshHist(){ if (!S.hm) return; var sh = $('#modal .sheet'); if (sh) sh.innerHTML = histModalHTML(); }
@@ -1902,6 +1905,11 @@ document.addEventListener('click', function(e){
   if (a === 'tab') { openPage(el.dataset.tab); return; }
   if (a === 'mic') { startMic(); return; }
   if (a === 'hist-open') return openHist();
+  if (a === 'hist-clear') {
+    if (!el.dataset.armed) { el.dataset.armed = '1'; el.classList.add('armed'); el.textContent = 'Confirmer : tout supprimer'; return; }
+    S.hist.slice().forEach(function(x){ removeHist(x.id); });
+    closeModal(); render(); toast('Historique supprimé'); return;
+  }
   if (a === 'hist-undo') { var he = histById(el.dataset.id); if (he) revertTo(he); return; }
   if (a === 'hist-redo') { var hr = histById(el.dataset.id); if (hr) redoTo(hr); return; }
   if (a === 'hist-apply') { var ha = histById(el.dataset.id); if (ha && ha.st === 'proposed') { applyEntry(ha); render(); refreshHist(); doneToast(ha); } return; }
