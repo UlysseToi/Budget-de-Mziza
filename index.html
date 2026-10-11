@@ -266,6 +266,9 @@ details>summary::-webkit-details-marker{display:none}
 .crow .cnum small{font-size:12px;color:var(--muted)}
 .crow .cnum small.bad{color:var(--bad)}
 .crow.off .cname,.crow.off .cnum b{color:var(--muted);font-weight:500}
+.crow button.cnum{background:none;border:0;padding:4px 0 4px 8px;margin:-4px 0;cursor:pointer;font:inherit;color:inherit;align-items:flex-end;border-radius:10px}
+.crow button.cnum b{text-decoration:underline dotted var(--muted);text-underline-offset:5px;text-decoration-thickness:1.5px}
+.crow button.cnum:hover{background:var(--surface-2)}
 .frow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 16px;border-top:1px solid var(--line)}
 .frow .name{min-width:0}
 .frow .name b{font-weight:600;overflow-wrap:anywhere}
@@ -713,12 +716,14 @@ function isOn(it){ return it.active !== false; }
 function dailyBudgets(left){
   var on = itemsOf('variable').filter(isOn), w = sum(on, function(i){ return Math.max(0, +i.amount || 0); }), out = {};
   if (!(left >= 1) || !(w > 0)) return out;
-  var total = Math.floor(left), acc = 0, big = null;
+  /* whole euros: round down, then hand the leftover euros to the largest fractions (an amount typed in euros stays exact) */
+  var total = Math.floor(left), acc = 0, fr = [];
   on.forEach(function(it){
-    var v = Math.round(total * Math.max(0, +it.amount || 0) / w); out[it.id] = v; acc += v;
-    if (!big || (+it.amount || 0) > (+big.amount || 0)) big = it;
+    var raw = total * Math.max(0, +it.amount || 0) / w, v = Math.floor(raw + 1e-6);
+    out[it.id] = v; acc += v; fr.push({id:it.id, f:raw - v});
   });
-  if (big) out[big.id] = Math.max(0, out[big.id] + (total - acc));
+  fr.sort(function(a, b){ return b.f - a.f; });
+  for (var k = 0; k < total - acc && fr.length; k++) out[fr[k % fr.length].id]++;
   return out;
 }
 function dailyStats(m, infos){
@@ -1077,7 +1082,8 @@ function catRow(r){
   var on = r.active;
   var chk = '<label class="chk"><input type="checkbox" data-toggle="' + esc(r.id) + '" data-k="chk-' + esc(r.id) + '"' + (on ? ' checked' : '') + ' aria-label="Inclure ' + esc(r.name) + ' dans le budget"></label>';
   var name = '<button class="cname" data-action="edit-item" data-id="' + esc(r.id) + '" data-k="en-' + esc(r.id) + '" title="Changer la part de ' + esc(r.name) + '"><span class="dot" style="background:' + r.color + '"></span><span class="t">' + esc(r.name) + '</span></button>';
-  if (!on) return '<div class="crow off">' + chk + name + '<span class="off-txt">Non budgétée</span><span class="cnum"><b>—</b></span></div>';
+  var numBtn = function(inner){ return '<button class="cnum" data-action="edit-item" data-id="' + esc(r.id) + '" data-k="ca-' + esc(r.id) + '" aria-label="Changer le budget de ' + esc(r.name) + '">' + inner + '</button>'; };
+  if (!on) return '<div class="crow off">' + chk + name + '<span class="off-txt">Non budgétée</span>' + numBtn('<b>—</b>') + '</div>';
   var plan = r.plan, real = r.real, over = plan > 0 && real > plan + 0.005, pct = plan > 0 ? Math.min(1, real / plan) : 0, rest = plan - real;
   var num;
   if (over) num = '<b class="big bad">−' + eur(-rest) + '</b><small class="bad">dépassé · sur ' + eur(plan) + '</small>';
@@ -1085,7 +1091,7 @@ function catRow(r){
   else num = '<b>' + eur(plan) + '</b><small>il reste ' + eur(plan) + '</small>';
   return '<div class="crow">' + chk + name +
     '<div class="cbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(pct*100) + '" aria-label="Budget utilisé : ' + esc(r.name) + '"><i style="width:' + (pct*100).toFixed(1) + '%;background:' + (over ? 'var(--bad)' : r.color) + '"></i></div>' +
-    '<span class="cnum">' + num + '</span></div>';
+    numBtn(num) + '</div>';
 }
 function dailyPanel(infos){
   var m = S.month, ds = dailyStats(m, infos);
@@ -1110,7 +1116,7 @@ function dailyPanel(infos){
   var card = '<section class="card dcard"><h2>Répartition du budget</h2>' +
     '<div class="dwrap"><div class="donut">' + donutSVG(plans, ds.env) + '</div>' +
     '<div class="cats">' + rows.map(catRow).join('') + (orphan > 0.004 ? '<div class="empty-row">Dont ' + eur(orphan) + ' dans une catégorie supprimée.</div>' : '') + '</div></div>' + note +
-    '<p class="dnote">Touchez le nom d\'une catégorie pour changer sa part.</p></section>';
+    '<p class="dnote">Touchez un montant pour changer le budget de la catégorie, en euros.</p></section>';
   var list = '<section class="card sec"><div class="sec-head"><div class="left"><h3>Dépenses du mois</h3><span class="tot">' + ds.dayTx.length + ' enregistrée' + (ds.dayTx.length > 1 ? 's' : '') + '</span></div></div>' +
     (ds.dayTx.length ? mvRows(sortDesc(ds.dayTx)) : '<div class="empty-row">Aucune dépense en ' + esc(monthLabel(m)) + '.</div>') + '</section>';
   return monthNav() + strip(cells) + qa + card + list;
@@ -1488,7 +1494,7 @@ function budgetContext(){
     entrees_par_mois: inc.map(function(i){ return {id:i.id, nom:i.name, montant:+i.amount || 0}; }),
     charges_fixes_par_mois: fx.map(function(i){ return {id:i.id, nom:i.name, montant:+i.amount || 0}; }),
     dettes: infos.map(function(i){ return {id:i.d.id, nom:i.d.name, dette_de_depart:i.start, reste:i.rem, mensualite:i.mo}; }),
-    budget_quotidien_par_mois: itemsOf('variable').map(function(i){ return {id:i.id, nom:i.name, active:isOn(i), part_pourcent:+i.amount || 0, budget:ds.bud[i.id] || 0}; }),
+    budget_quotidien_par_mois: itemsOf('variable').map(function(i){ return {id:i.id, nom:i.name, active:isOn(i), part_pourcent:Math.round(+i.amount || 0), budget:ds.bud[i.id] || 0}; }),
     totaux: {entrees:planIncome(), charges_fixes:planFixed(), mensualites_dettes:monthlyDebts(infos), disponible_pour_le_quotidien:round2(ds.left)},
     historique_des_demandes_actives: act.slice(-8).map(function(e, k){ return {rang_depuis_la_derniere:act.slice(-8).length - k, demande:e.q, modifications:e.lines.map(function(l){ return l.t; })}; })
   });
@@ -1654,13 +1660,15 @@ function submitMove(){
 function itemHTML(){
   var I = S.i;
   var titles = {income:'entrée d\'argent', fixed:'charge fixe', variable:'catégorie du quotidien'};
-  var amountLabel = I.type === 'variable' ? 'Part du budget (en %)' : 'Montant par mois (€)';
+  var eurMode = I.type === 'variable' && I.id;
+  var amountLabel = eurMode ? 'Budget par mois (€)' : I.type === 'variable' ? 'Part du budget (en %)' : 'Montant par mois (€)';
   var grp = '';
+  if (eurMode) grp = '<p class="dinfo">Disponible pour le quotidien : <b>' + eur(I.env) + '</b> par mois. Les autres catégories cochées se partagent ce qui reste.</p>';
   if (I.type === 'income') {
     var go = function(v, l){ return '<option value="' + v + '"' + (I.group === v ? ' selected' : '') + '>' + l + '</option>'; };
     grp = '<div class="field"><label for="i-group">Type d\'entrée</label><select id="i-group" name="group">' + go('salary','Salaire') + go('family','Participation d\'un enfant') + go('other','Aide ou autre entrée') + '</select></div>';
   }
-  return '<h2>' + (I.id ? (I.type === 'variable' ? 'Part de la catégorie' : 'Modifier la ligne') : 'Nouvelle ' + titles[I.type]) + '</h2>' +
+  return '<h2>' + (I.id ? (I.type === 'variable' ? 'Budget de la catégorie' : 'Modifier la ligne') : 'Nouvelle ' + titles[I.type]) + '</h2>' +
     '<form data-form="item" novalidate style="display:flex;flex-direction:column;gap:14px">' +
     '<div class="field"><label for="i-name">Nom</label><input id="i-name" name="name" maxlength="60" value="' + esc(I.name) + '"></div>' + grp +
     '<div class="field"><label for="i-amount">' + amountLabel + '</label><input id="i-amount" name="amount" inputmode="decimal" autocomplete="off" value="' + esc(I.amount) + '" placeholder="0"></div>' +
@@ -1672,7 +1680,24 @@ function itemHTML(){
 function openItem(type, id){
   var it = id ? S.cfg.items.find(function(x){ return x.id === id; }) : null;
   S.i = it ? {id:it.id, type:it.type, name:it.name, amount:fmtIn(it.amount||0), note:it.note||'', group:gOf(it)} : {id:null, type:type, name:'', amount:'', note:'', group:'other'};
+  if (it && it.type === 'variable') {
+    /* daily categories are edited in euros; the stored value stays a share (%) */
+    var ds = dailyStats(nowMonth(), S.cfg.debts.map(dInfo));
+    S.i.env = ds.env; S.i.amount = fmtIn(isOn(it) ? (ds.bud[it.id] || 0) : 0);
+  }
   showModal(itemHTML(), it ? '#i-amount' : '#i-name');
+}
+/* sets one daily category to `x` euros a month; the other checked categories share the rest in their current proportions */
+function setCategoryEuros(id, x, env){
+  var bud = dailyStats(nowMonth(), S.cfg.debts.map(dInfo)).bud;
+  var others = itemsOf('variable').filter(function(c){ return isOn(c) && c.id !== id; });
+  var restOld = sum(others, function(c){ return bud[c.id] || 0; }), restNew = env - x;
+  var w = function(e){ return Math.round(e / env * 1e6) / 1e4; };
+  others.forEach(function(c){
+    c.amount = restOld > 0 ? w((bud[c.id] || 0) * restNew / restOld) : w(restNew / others.length);
+  });
+  var t = S.cfg.items.find(function(c){ return c.id === id; });
+  if (t) { t.amount = w(x); delete t.active; }
 }
 function submitItem(form){
   var I = S.i, err = $('#i-err');
@@ -1680,6 +1705,15 @@ function submitItem(form){
   var amt = raw === '' ? 0 : parseAmt(raw);
   if (!name) { err.textContent = 'Indiquez un nom.'; return; }
   if (!(amt >= 0)) { err.textContent = 'Le montant doit être un nombre positif ou nul.'; return; }
+  if (I.type === 'variable' && I.id) {
+    if (!(I.env > 0)) { err.textContent = 'Il n\'y a rien à répartir : les entrées ne couvrent pas les charges fixes et les dettes.'; return; }
+    if (amt > I.env) { err.textContent = 'Au maximum ' + eur(I.env) + ' (tout le budget du quotidien).'; return; }
+    var cur = S.cfg.items.find(function(x){ return x.id === I.id; });
+    if (cur) { cur.name = name; cur.note = form.elements.note.value.trim(); }
+    setCategoryEuros(I.id, round2(amt), I.env);
+    persistCfg(); closeModal(); render(); toast(name + ' : ' + eur(amt) + ' par mois');
+    return;
+  }
   var note = form.elements.note.value.trim();
   var group = (I.type === 'income' && form.elements.group) ? form.elements.group.value : null;
   var build = function(id, type){ var o = {id:id, type:type, name:name, amount:round2(amt), note:note}; if (type === 'income') o.group = group || 'other'; var old = S.cfg.items.find(function(x){ return x.id === id; }); if (type === 'variable' && old && old.active === false) o.active = false; return o; };
