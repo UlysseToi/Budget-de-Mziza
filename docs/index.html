@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Budget de M'ziza</title>
+<meta name="theme-color" content="#357F60">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icones/icone-192.png">
+<link rel="apple-touch-icon" href="icones/icone-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Budget M'ziza">
+<style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:#EDF3EE;color:#1E3A2F;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:100%;max-width:440px;display:flex;flex-direction:column;gap:18px;align-items:center;text-align:center}
+img.logo{width:112px;height:112px;border-radius:26px;box-shadow:0 14px 30px -14px rgba(30,58,47,.5)}
+h1{margin:0;font-size:26px;letter-spacing:-.01em}
+.btn{display:block;width:100%;padding:15px 18px;border-radius:16px;background:#357F60;color:#fff;font-weight:700;font-size:18px;text-decoration:none}
+.card{width:100%;text-align:left;background:#FBFDFB;border:1px solid #D6E4DA;border-radius:20px;padding:16px 18px}
+.card h2{margin:0 0 8px;font-size:16px}
+.card ol{margin:0;padding-left:20px;color:#4d6a5c;font-size:15px;display:flex;flex-direction:column;gap:6px}
+.note{font-size:13.5px;color:#5B7566}
+</style>
+</head>
+<body>
+<main>
+  <img class="logo" src="icones/icone-512.png" alt="">
+  <h1>Budget de M'ziza</h1>
+  <a class="btn" id="open" href="https://claude.ai/artifact/JZUEooVNtjQxttN9E8CQr5">Ouvrir le budget</a>
+  <section class="card" id="how">
+    <h2>Mettre l'icône sur votre écran d'accueil</h2>
+    <ol>
+      <li><b>iPhone (Safari) :</b> touchez Partager, puis « Sur l'écran d'accueil ».</li>
+      <li><b>Android (Chrome) :</b> touchez le menu ⋮, puis « Installer l'application » ou « Ajouter à l'écran d'accueil ».</li>
+      <li><b>Ordinateur (Chrome, Edge) :</b> cliquez sur l'icône d'installation à droite de la barre d'adresse.</li>
+    </ol>
+  </section>
+  <p class="note">À la première ouverture, connectez-vous à Claude (compte gratuit possible).</p>
+</main>
+<script>
+/* Lancée depuis l'icône de l'écran d'accueil : on ouvre directement le budget. */
+(function(){
+  try {
+    var standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    if (standalone) location.replace(document.getElementById('open').href);
+  } catch(e){}
+})();
+</script>
+</body>
+</html>

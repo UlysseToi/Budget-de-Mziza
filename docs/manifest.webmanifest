@@ -1,0 +1,14 @@
+{
+  "name": "Budget de M'ziza",
+  "short_name": "Budget M'ziza",
+  "description": "Suivi du budget, des dettes et des dépenses de M'ziza",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EDF3EE",
+  "theme_color": "#357F60",
+  "icons": [
+    {"src": "icones/icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icones/icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
+  ]
+}
