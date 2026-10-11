@@ -215,7 +215,10 @@ details>summary::-webkit-details-marker{display:none}
 @keyframes pulse{50%{box-shadow:0 0 0 7px var(--accent-soft)}}
 @media (prefers-reduced-motion: reduce){.ask .mic.on{animation:none}}
 .sim{padding:4px 16px}
-.sim summary{padding:12px 0;font-weight:600;font-size:14px;color:var(--muted)}
+.sim{padding:0;border:2px solid var(--accent)}
+.sim summary{display:flex;align-items:center;gap:10px;padding:13px 16px;font:700 16px var(--font-display);color:var(--accent)}
+.sim summary svg{width:22px;height:22px;flex:0 0 auto}
+.sim .histlist{padding:0 16px 14px}
 .histlist{display:flex;flex-direction:column;gap:10px;padding-bottom:14px}
 .sit.undone{opacity:.6}
 .sit-q small{display:block;font-weight:400;font-size:12.5px;color:var(--muted)}
@@ -536,13 +539,12 @@ function ago(t){
   var h = Math.round(m / 60); return h < 24 ? 'il y a ' + h + ' h' : 'il y a ' + Math.round(h / 24) + ' j';
 }
 function histHTML(){
-  if (!S.hist.length) return '';
   var rows = S.hist.slice().reverse().map(function(e){
     return '<div class="sit' + (e.undone ? ' undone' : '') + '"><div class="sit-top"><span class="num">' + (S.hist.indexOf(e) + 1) + '</span><span class="sit-q">« ' + esc(e.q) + ' »<small>' + esc(ago(e.t)) + (e.undone ? ' · annulée' : '') + '</small></span></div>' +
       '<ul>' + (e.lines.length ? e.lines.map(function(l){ return '<li' + (l.miss ? ' class="miss"' : '') + '>' + esc(l.t) + '</li>'; }).join('') : '<li class="miss">Aucune modification</li>') + '</ul>' +
       (e.lines.length ? '<div class="sit-acts">' + (e.undone ? '<button class="btn sm" data-action="hist-redo" data-id="' + esc(e.id) + '">Rétablir</button>' : '<button class="btn sm" data-action="hist-undo" data-id="' + esc(e.id) + '">Revenir à avant</button>') + '</div>' : '') + '</div>';
   }).join('');
-  return '<section class="card sim"><details' + detailsAttr('hist') + '><summary>Historique des demandes (' + S.hist.length + ') · gardé 48 h</summary><div class="histlist">' + rows + '</div></details></section>';
+  return '<section class="card sim"><details' + detailsAttr('hist') + '><summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Historique des demandes (' + S.hist.length + ')</summary><div class="histlist">' + (rows || '<p class="tiny" style="color:var(--muted)">Aucune demande pour le moment. Elles sont gardées 48 h et peuvent être annulées ici.</p>') + '</div></details></section>';
 }
 
 /* ---------- computations ---------- */
@@ -1114,7 +1116,7 @@ async function askClaude(q){
     '\n\nDemande de l\'utilisatrice : "' + q.replace(/"/g, "'") + '"\n\n' +
     'Réponds UNIQUEMENT par un objet JSON {"reponse": "...", "changes": [...], "annuler": null}.\n' +
     '- "reponse" : français simple, 40 à 110 mots, sans markdown : ce que tu as modifié, ou la réponse à la question.\n' +
-    '- "changes" : modifications appliquées IMMÉDIATEMENT dans l\'application. Remplis-la dès que la demande est une instruction (« ajoute », « mets », « supprime », « et si Andreia donne 50 € ») ; ces changements seront enregistrés dans un historique que l\'utilisatrice peut annuler. Pour une simple question de calcul (« combien faudrait-il… »), laisse-la vide et réponds par le calcul (entrées − charges fixes − mensualités = disponible pour le quotidien) ; en cas de déficit, indique d\'abord l\'aide supplémentaire nécessaire, puis de combien renégocier les mensualités dette par dette, et propose d\'appliquer ces pistes.\n' +
+    '- "changes" : modifications appliquées IMMÉDIATEMENT dans l\'application. Tu DOIS la remplir dès que la demande contient une instruction ou une hypothèse (« ajoute », « rajoute », « mets », « passe à », « supprime », « et si Andreia donne 50 € ») : n\'explique pas ce que tu ferais, fais-le en renseignant changes ; ils sont enregistrés dans un historique que l\'utilisatrice peut annuler. « reponse » peut alors rester vide. Pour une simple question de calcul (« combien faudrait-il… »), laisse-la vide et réponds par le calcul (entrées − charges fixes − mensualités = disponible pour le quotidien) ; en cas de déficit, indique d\'abord l\'aide supplémentaire nécessaire, puis de combien renégocier les mensualités dette par dette, et propose d\'appliquer ces pistes.\n' +
     '- "annuler" : si elle demande d\'annuler une ou plusieurs demandes précédentes (« annule », « reviens en arrière », « annule les deux dernières »), mets le nombre de demandes à annuler en partant de la dernière (nombre entier), ou "toutes" ; sinon null. Dans ce cas "changes" reste vide.\n' +
     'Formes possibles d\'une modification (target = id ou nom exact) :\n' +
     '{"op":"set_amount","target":"...","amount":N} entrée d\'argent ou charge fixe\n' +
@@ -1128,20 +1130,28 @@ async function askClaude(q){
   try {
     var r = await S.sample.json(prompt, {modelTier:'default', signal:ctl.signal, cache:false});
     var ops = cleanOps(r && r.changes), text = String((r && r.reponse) || '').trim();
-    var act = S.hist.filter(function(e){ return !e.undone; });
+    var applied = null, act = S.hist.filter(function(e){ return !e.undone; });
     if (r && r.annuler != null && r.annuler !== false) {
       var n = r.annuler === 'toutes' ? act.length : Math.max(1, Math.min(act.length, parseInt(r.annuler, 10) || 1));
       if (!act.length) { text = 'Il n\'y a aucune demande à annuler.'; }
-      else { var target = act[act.length - n]; revertTo(target); text = (text || 'C\'est annulé.') + '\n\n' + (n > 1 ? n + ' demandes annulées' : 'Demande annulée') + ' : retour à avant « ' + target.q.slice(0, 50) + ' ».'; }
+      else { var target = act[act.length - n]; revertTo(target); S.askAsked = ''; text = ''; return; }
     } else if (ops.length) {
       S.hist.filter(function(e){ return e.undone; }).forEach(function(e){ removeHist(e.id); });
       var before = snapCfg(), lines = applyOps(S.cfg, ops);
       persistCfg();
       var e = {id:'h-' + uid(), q:q, t:Date.now(), lines:lines, before:before, after:snapCfg(), undone:false};
       S.hist.push(e); persistHist(e);
-      text = (text || 'C\'est fait.') + '\n\nAppliqué tout de suite. Vous pouvez revenir en arrière dans l\'historique.';
+      applied = e;
     }
-    S.askOut = text || 'Je n\'ai rien à modifier pour cette demande.';
+    if (applied) {
+      S.askAsked = ''; S.askOut = '';
+      var shown = applied.lines.filter(function(l){ return !l.miss; }).map(function(l){ return l.t; });
+      var missed = applied.lines.length - shown.length;
+      var ev = applied;
+      toast('Fait : ' + (shown.slice(0, 2).join(' · ') || 'aucune modification') + (shown.length > 2 ? ' (+' + (shown.length - 2) + ')' : '') + (missed ? ' · ' + missed + ' élément introuvable' : ''), function(){ revertTo(ev); });
+    } else {
+      S.askOut = text || 'Je n\'ai rien à modifier pour cette demande.';
+    }
   } catch(e) {
     if (e && e.code === 'cancelled') { S.askAsked = ''; }
     else if (e && e.code === 'not_granted') { S.askOut = 'La question n\'a pas pu être envoyée : l\'autorisation de contacter Claude a été refusée.'; }
