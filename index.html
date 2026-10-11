@@ -412,6 +412,8 @@ header.top h1{font-size:inherit}h1 .home:focus-visible{outline:2px solid var(--a
 .fs-leg{padding:8px 16px 0;display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--muted)}
 .fs-leg span{display:inline-flex;align-items:center;gap:6px}
 .fs-leg i{width:12px;height:12px;border-radius:50%;display:inline-block}
+.addbar{display:flex;gap:10px;flex-wrap:wrap}
+.addbar .btn.primary{padding:13px 20px;font-size:16px}
 /* "Ce mois-ci" card + overdraft */
 .mcard{padding:18px 20px;display:flex;flex-direction:column;gap:10px}
 .mhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
@@ -538,7 +540,7 @@ function persistCfg(){
 }
 function persistTx(t){
   if (!db) { saveLocal(); return; }
-  db.collection('tx').doc(t.id).set({date:t.date,kind:t.kind,ref:t.ref,label:t.label,amount:t.amount,note:t.note||''}).catch(writeFailed);
+  db.collection('tx').doc(t.id).set({date:t.date,kind:t.kind,ref:t.ref,label:t.label,name:t.name||'',amount:t.amount,note:t.note||''}).catch(writeFailed);
 }
 function removeTx(id){
   if (!db) { saveLocal(); return; }
@@ -1104,7 +1106,7 @@ function monthNav(){
 function mvRows(list){
   return list.map(function(t){
     var armed = S.confirm === t.id;
-    return '<div class="mv"><span class="d">' + esc(dateLabel(t.date)) + '</span><div class="t"><b>' + esc(t.label || '—') + '</b>' + (t.note ? '<small>' + esc(t.note) + '</small>' : '') + '</div>' +
+    return '<div class="mv"><span class="d">' + esc(dateLabel(t.date)) + '</span><div class="t"><b>' + esc(t.name || t.label || '—') + '</b>' + (t.name || t.note ? '<small>' + esc([t.name ? t.label : '', t.note].filter(Boolean).join(' · ')) + '</small>' : '') + '</div>' +
       '<span class="a">' + eur(t.amount) + '</span>' +
       '<div class="x"><button class="btn sm ghost" data-action="edit-tx" data-id="' + esc(t.id) + '" data-k="te-' + esc(t.id) + '">Modifier</button>' +
       '<button class="btn sm danger' + (armed ? ' armed' : '') + '" data-action="del-tx" data-id="' + esc(t.id) + '" data-k="td-' + esc(t.id) + '">' + (armed ? 'Confirmer' : 'Supprimer') + '</button></div></div>';
@@ -1189,11 +1191,8 @@ function dailyPanel(infos){
     ['Dépensé', eur(ds.rDay), 'en ' + monthLabel(m)],
     ['Il reste', eur(remain), remain < 0 ? 'budget dépassé' : 'à dépenser ce mois-ci', remain < 0]
   ];
-  var qa = '<section class="card qa"><h2>Ajouter une dépense</h2>' +
-    '<form data-form="qa" novalidate><input id="qa-text" data-k="qa-text" type="text" autocomplete="off" enterkeyhint="done" placeholder="ex. 100 euros courses" value="' + esc(S.qa) + '" aria-label="Décrire la dépense"><button type="submit" class="btn primary">Ajouter</button></form>' +
-    '<p class="hint">Écrivez, ou dictez avec le micro de votre clavier. Le montant et la catégorie sont reconnus, puis la jauge se remplit.</p>' +
-    (S.canScan ? '<div class="scan"><button type="button" class="btn" data-action="scan-pick" data-k="scan-pick">Scanner un ticket de caisse</button><input id="scan-file" type="file" accept="image/*" hidden></div>' : '') +
-    '</section>';
+  var qa = '<div class="addbar"><button type="button" class="btn primary" data-action="new-expense" data-k="new-expense">+ Ajouter une dépense</button>' +
+    (S.canScan ? '<button type="button" class="btn" data-action="scan-pick" data-k="scan-pick">Scanner un ticket</button><input id="scan-file" type="file" accept="image/*" hidden>' : '') + '</div>';
   var note;
   if (ds.env <= 0) note = '<p class="dnote bad">Rien à répartir : les entrées ne couvrent pas les charges fixes, les dettes' + (od ? ' et le découvert' : '') + (ds.left < 0 ? ' (il manque ' + eur(-ds.left) + ')' : '') + '.</p>';
   else if (!rows.some(function(r){ return r.active; })) note = '<p class="dnote">Cochez au moins une catégorie.</p>';
@@ -1207,7 +1206,7 @@ function dailyPanel(infos){
     (ds.dayTx.length ? mvRows(sortDesc(ds.dayTx)) : '<div class="empty-row">Aucune dépense en ' + esc(monthLabel(m)) + '.</div>') + '</section>';
   var odRow = '<div class="odbar"><span>' + (od ? 'Découvert au début du mois : <b>' + esc(eur(od)) + '</b>' : 'Pas de découvert indiqué pour ce mois.') + '</span>' +
     '<button class="btn sm" data-action="od-edit" data-m="' + m + '" data-k="od-d">' + (od ? 'Modifier' : 'Indiquer un découvert') + '</button></div>';
-  return monthNav() + strip(cells) + odRow + qa + card + list;
+  return monthNav() + qa + strip(cells) + odRow + card + list;
 }
 
 /* ---------- Entrées d'argent tab ---------- */
@@ -1277,7 +1276,7 @@ function view(){
 function render(){
   var app = $('#app');
   var act = document.activeElement, key = act && act.dataset ? act.dataset.k : null;
-  var hadText = act && (act.id === 'qa-text' || act.id === 'ask-text' || act.id === 'fx-search');
+  var hadText = act && (act.id === 'ask-text' || act.id === 'fx-search');
   var sy = window.scrollY;
   app.innerHTML = view();
   applyFixedSearch(false);
@@ -1325,48 +1324,12 @@ function matchCategory(text){
   });
   return best;
 }
-function parseAmountText(text){
-  var re = /(\d+(?:[.,]\d{1,2})?)\s*(€|euros\b|euro\b|eur\b)?/gi, m, first = null, cur = null;
-  while ((m = re.exec(text))) {
-    var v = parseFloat(m[1].replace(',', '.'));
-    if (!(v > 0)) continue;
-    if (first === null) first = v;
-    if (m[2] && cur === null) cur = v;
-  }
-  return cur !== null ? cur : first;
-}
 function addExpense(ref, amount, date, note){
   var it = S.cfg.items.find(function(x){ return x.id === ref; });
   var t = {id:'t-' + uid(), date:date, kind:'expense', ref:ref, label:it ? it.name : '', amount:round2(amount), note:(note || '').trim()};
   S.tx.push(t); persistTx(t); return t;
 }
-function undoTx(id){ S.tx = S.tx.filter(function(x){ return x.id !== id; }); removeTx(id); render(); }
 function defaultDate(){ return S.month === nowMonth() ? todayISO() : S.month + '-01'; }
-async function classifyWithClaude(text){
-  var cats = itemsOf('variable').filter(isOn);
-  if (!S.sample || !cats.length) return null;
-  try {
-    var list = cats.map(function(c){ return c.id + ' = ' + c.name + (c.note ? ' (' + c.note + ')' : ''); }).join('\n');
-    var r = await S.sample.json('Voici les catégories de dépenses du quotidien d\'un budget familial :\n' + list + '\n\nPhrase saisie par l\'utilisatrice : "' + text.replace(/"/g, "'") + '"\n\nChoisis la catégorie la plus probable. Réponds uniquement avec un objet JSON de la forme {"id": "<identifiant>"} ou {"id": null} si aucune ne convient.', {modelTier:'quick'});
-    var found = r && cats.find(function(c){ return c.id === r.id; });
-    return found || null;
-  } catch(e){ return null; }
-}
-async function quickAdd(text){
-  text = (text || '').trim(); if (!text) return;
-  var amount = parseAmountText(text);
-  if (!amount) { toast('Je n\'ai pas trouvé de montant. Exemple : « 100 euros courses ».'); return; }
-  var date = /\bhier\b/i.test(norm(text)) ? addDays(todayISO(), -1) : defaultDate();
-  var cat = matchCategory(text);
-  if (!cat) cat = await classifyWithClaude(text);
-  S.qa = '';
-  if (cat) {
-    var t = addExpense(cat.id, amount, date, text);
-    render(); toast(eur(amount) + ' ajoutés à « ' + cat.name + ' »', function(){ undoTx(t.id); });
-  } else {
-    render(); openMove('', null, 'var', {amount:fmtIn(amount), date:date, note:text, title:'Choisir la catégorie'});
-  }
-}
 function resizeImage(file, max){
   return new Promise(function(res, rej){
     var url = URL.createObjectURL(file), img = new Image();
@@ -1393,8 +1356,7 @@ async function handleScan(file){
     var list = cats.map(function(c){ return c.id + ' = ' + c.name + (c.note ? ' (' + c.note + ')' : ''); }).join('\n');
     var r = await S.sample.json('Cette image est la photo d\'un ticket de caisse français. Lis-la et réponds uniquement avec un objet JSON de la forme {"total": <montant total payé en euros, nombre avec point décimal, ou null si illisible>, "commerce": "<nom court du commerce ou chaîne vide>", "date": "<AAAA-MM-JJ ou null>", "id": "<identifiant de la catégorie la plus probable ou null>"}.\nCatégories possibles :\n' + list, {images:blob, signal:ctl.signal});
     if (r && +r.total > 0) pre.amount = fmtIn(+r.total);
-    if (r && r.commerce) pre.note = 'Ticket ' + String(r.commerce).slice(0, 60);
-    else pre.note = 'Ticket de caisse';
+    pre.what = r && r.commerce ? String(r.commerce).slice(0, 60) : 'Ticket de caisse';
     if (r && typeof r.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.date) && r.date <= todayISO()) pre.date = r.date;
     if (r && cats.some(function(c){ return c.id === r.id; })) pre.ref = r.id;
     closeModal();
@@ -1405,7 +1367,7 @@ async function handleScan(file){
     if (e && e.code === 'cancelled') return;
     var msg = e && e.code === 'not_granted' ? 'La lecture des tickets n\'est pas autorisée.' : e && e.code === 'image_rejected' ? 'Cette image ne peut pas être lue. Essayez une autre photo.' : 'Impossible de lire ce ticket. Saisissez le montant à la main.';
     toast(msg);
-    if (!e || e.code !== 'not_granted') openMove('', null, 'var', {title:'Nouvelle dépense', date:pre.date, amount:'', note:'Ticket de caisse'});
+    if (!e || e.code !== 'not_granted') openMove('', null, 'var', {title:'Nouvelle dépense', date:pre.date, amount:'', what:'Ticket de caisse'});
   } finally { S.scanCtl = null; }
 }
 
@@ -1704,9 +1666,10 @@ function moveHTML(){
   var title = M.title || (M.editId ? 'Modifier la dépense' : 'Nouvelle dépense');
   return '<h2>' + esc(title) + '</h2>' +
     '<form data-form="move" novalidate style="display:flex;flex-direction:column;gap:14px">' +
+    '<div class="field"><label for="m-what">Nom de la dépense</label><input id="m-what" maxlength="60" autocomplete="off" value="' + esc(M.what||'') + '" placeholder="ex. Courses Lidl, pharmacie…"></div>' +
+    '<div class="field"><label for="m-amount">Montant (€)</label><input id="m-amount" inputmode="decimal" autocomplete="off" value="' + esc(M.amount||'') + '" placeholder="0,00"></div>' +
     '<div class="field"><label for="m-ref">Catégorie</label><select id="m-ref">' + opts + '</select></div>' +
     (M.ref === '__new' ? '<div class="field"><label for="m-name">Nom de la catégorie</label><input id="m-name" maxlength="60" value="' + esc(M.name||'') + '" placeholder="ex. Animaux"></div>' : '') +
-    '<div class="field"><label for="m-amount">Montant (€)</label><input id="m-amount" inputmode="decimal" autocomplete="off" value="' + esc(M.amount||'') + '" placeholder="0,00"></div>' +
     '<div class="field"><label for="m-date">Date</label><input id="m-date" type="date" value="' + esc(M.date) + '"></div>' +
     '<div class="field"><label for="m-note">Remarque (facultatif)</label><input id="m-note" maxlength="120" value="' + esc(M.note||'') + '"></div>' +
     '<p class="err" id="m-err" role="alert"></p>' +
@@ -1720,9 +1683,15 @@ function refreshMove(focusId){
 function openMove(ref, tx, scope, pre){
   pre = pre || {};
   var date = defaultDate();
-  S.m = tx ? {scope:'all', ref:tx.ref, name:'', amount:fmtIn(tx.amount), date:tx.date, note:tx.note||'', editId:tx.id}
-           : {scope:scope || 'var', ref:ref || pre.ref || '', name:'', amount:pre.amount || '', date:pre.date || date, note:pre.note || '', editId:null, title:pre.title};
-  showModal(moveHTML(), S.m.ref && S.m.amount ? '#m-note' : (S.m.ref ? '#m-amount' : '#m-ref'));
+  S.m = tx ? {scope:'all', ref:tx.ref, name:'', what:tx.name || '', amount:fmtIn(tx.amount), date:tx.date, note:tx.note||'', editId:tx.id, refSet:true}
+           : {scope:scope || 'var', ref:ref || pre.ref || '', name:'', what:pre.what || '', amount:pre.amount || '', date:pre.date || date, note:pre.note || '', editId:null, title:pre.title, refSet:!!(ref || pre.ref)};
+  showModal(moveHTML(), tx ? null : (S.m.what ? (S.m.amount ? null : '#m-amount') : '#m-what'));
+}
+/* while the name is typed, suggest the category (until one is picked by hand) */
+function suggestCategory(){
+  var M = S.m; if (!M || M.refSet || M.editId) return;
+  var c = matchCategory(M.what || ''), sel = $('#m-ref');
+  if (c && sel && M.ref !== c.id) { M.ref = c.id; sel.value = c.id; }
 }
 function submitMove(){
   var M = S.m, err = $('#m-err');
@@ -1739,7 +1708,7 @@ function submitMove(){
   } else {
     var i2 = S.cfg.items.find(function(x){ return x.id === ref; }); label = i2 ? i2.name : '';
   }
-  var t = {id: M.editId || ('t-' + uid()), date:M.date, kind:'expense', ref:ref, label:label, amount:round2(amt), note:(M.note||'').trim()};
+  var t = {id: M.editId || ('t-' + uid()), date:M.date, kind:'expense', ref:ref, label:label, name:(M.what||'').trim().slice(0, 60), amount:round2(amt), note:(M.note||'').trim()};
   if (M.editId) { S.tx = S.tx.map(function(x){ return x.id === t.id ? t : x; }); } else { S.tx.push(t); }
   persistTx(t);
   closeModal(); render(); toast('Dépense de ' + eur(t.amount) + ' enregistrée');
@@ -1936,6 +1905,7 @@ document.addEventListener('click', function(e){
   if (a === 'month-next') { S.month = addMonths(S.month, 1); render(); return; }
   if (a === 'month-now') { S.month = nowMonth(); render(); return; }
   if (a === 'open-move') return openMove(el.dataset.ref, null, el.dataset.scope);
+  if (a === 'new-expense') return openMove('', null, 'var');
   if (a === 'quick') return quick(el.dataset.id);
   if (a === 'add-item') return openItem(el.dataset.type);
   if (a === 'edit-item') return openItem(null, el.dataset.id);
@@ -2051,12 +2021,10 @@ document.addEventListener('submit', function(e){
   else if (k === 'skip' && S.sk) submitSkip();
   else if (k === 'debt' && S.debt) submitDebt(f);
   else if (k === 'od' && S.od) submitOd(f);
-  else if (k === 'qa') quickAdd(S.qa);
   else if (k === 'ask') askClaude(S.askQ);
 });
 document.addEventListener('input', function(e){
   var id = e.target.id;
-  if (id === 'qa-text') { S.qa = e.target.value; return; }
   if (id === 'ask-text') { S.askQ = e.target.value; return; }
   if (id === 'fx-search') { S.fq = e.target.value; applyFixedSearch(true); return; }
   if (!S.m) return;
@@ -2064,6 +2032,7 @@ document.addEventListener('input', function(e){
   else if (id === 'm-date') S.m.date = e.target.value;
   else if (id === 'm-note') S.m.note = e.target.value;
   else if (id === 'm-name') S.m.name = e.target.value;
+  else if (id === 'm-what') { S.m.what = e.target.value; suggestCategory(); }
 });
 document.addEventListener('change', function(e){
   var id = e.target.id;
@@ -2074,7 +2043,7 @@ document.addEventListener('change', function(e){
   }
   if (id === 'scan-file') { var file = e.target.files && e.target.files[0]; e.target.value = ''; if (file) handleScan(file); return; }
   if (id === 'doc-photo' || id === 'doc-file') { var dfile = e.target.files && e.target.files[0]; e.target.value = ''; if (dfile) handleDoc(dfile); return; }
-  if (id === 'm-ref' && S.m) { S.m.ref = e.target.value; refreshMove(S.m.ref === '__new' ? 'm-name' : 'm-amount'); }
+  if (id === 'm-ref' && S.m) { S.m.ref = e.target.value; S.m.refSet = true; if (S.m.ref === '__new') refreshMove('m-name'); }
   else if (id === 'm-date' && S.m) { S.m.date = e.target.value; }
   else if (id === 'sk-debt' && S.sk) { S.sk.debt = e.target.value; S.sk.month = ''; refreshSkip(); }
   else if (id === 'sk-month' && S.sk) { S.sk.month = e.target.value; }
