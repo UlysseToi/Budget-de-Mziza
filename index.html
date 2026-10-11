@@ -214,6 +214,22 @@ details>summary::-webkit-details-marker{display:none}
 .ask .mic.on{background:var(--accent);color:var(--accent-ink);animation:pulse 1.2s ease-in-out infinite}
 @keyframes pulse{50%{box-shadow:0 0 0 7px var(--accent-soft)}}
 @media (prefers-reduced-motion: reduce){.ask .mic.on{animation:none}}
+.sim{padding:16px;display:flex;flex-direction:column;gap:12px;border:2px solid var(--warn);background:linear-gradient(180deg,var(--surface),var(--warn-soft) 260%)}
+.sim h2{font:700 18px var(--font-display);color:var(--warn)}
+.sim .lead{font-size:13.5px;color:var(--muted)}
+.sit{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--line);border-radius:16px;background:var(--surface)}
+.sit-top{display:flex;gap:10px;align-items:flex-start}
+.sit .num{flex:0 0 auto;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--warn);color:var(--surface);font:700 13px var(--font-display)}
+.sit-q{font-weight:600;overflow-wrap:anywhere}
+.sit ul{margin:0;padding-left:22px;font-size:14px;color:var(--ink);display:flex;flex-direction:column;gap:3px}
+.sit ul li.miss{color:var(--muted);font-style:italic}
+.sit-acts{display:flex;gap:8px;flex-wrap:wrap}
+.impact{display:flex;flex-direction:column;gap:6px;padding:12px;border-radius:16px;background:var(--accent-soft)}
+.impact h3{font:600 14px var(--font-display)}
+.impact div{display:flex;justify-content:space-between;gap:10px;font-size:14px;flex-wrap:wrap}
+.impact .v{font:700 14px var(--font-display);font-variant-numeric:tabular-nums}
+.impact .v.up{color:var(--accent)}.impact .v.down{color:var(--bad)}
+.sim-foot{display:flex;gap:8px;flex-wrap:wrap}
 .inst{padding:4px 16px}
 .inst summary{padding:12px 0;font-weight:600;color:var(--muted);font-size:14px}
 .inst ol{margin:0 0 12px;padding-left:20px;color:var(--muted);font-size:14px;display:flex;flex-direction:column;gap:6px}
@@ -348,7 +364,7 @@ var norm = function(s){ return String(s||'').toLowerCase().normalize('NFD').repl
 /* ---------- state ---------- */
 var S = {
   ready:false, mode:'db', cfg:{items:[],debts:[],startDate:todayISO()}, tx:[],
-  month: monthOf(todayISO()), tab:null, askQ:'', askOut:'', askBusy:false, askCtl:null, askAsked:'', confirm:null, played:false, open:{}, qa:'',
+  month: monthOf(todayISO()), tab:null, sim:[], realCfg:null, askQ:'', askOut:'', askBusy:false, askCtl:null, askAsked:'', confirm:null, played:false, open:{}, qa:'',
   m:null, i:null, sk:null, gotCfg:false, gotTx:false, sample:null, canScan:false, undo:null, scanCtl:null
 };
 var db = null;
@@ -401,6 +417,116 @@ function startDb(handle){
   }, function(){ S.gotTx = true; S.ready = S.gotCfg && S.gotTx; render(); });
 }
 function startLocal(){ db = null; S.mode = 'local'; loadLocal(); S.ready = true; render(); }
+
+
+/* ---------- simulation: Claude's changes are layered on top of the real data until validated ---------- */
+var SIM_KEY = 'budget-mziza-sim';
+function saveSim(){ try { localStorage.setItem(SIM_KEY, JSON.stringify(S.sim)); } catch(e){} }
+function loadSim(){ try { var a = JSON.parse(localStorage.getItem(SIM_KEY) || '[]'); S.sim = Array.isArray(a) ? a : []; } catch(e){ S.sim = []; } }
+function withCfg(cfg, fn){ var real = S.cfg; S.cfg = cfg; try { return fn(); } finally { S.cfg = real; } }
+function findBy(list, t){
+  t = String(t == null ? '' : t); var n = norm(t);
+  return list.find(function(x){ return x.id === t; }) || list.find(function(x){ return norm(x.name) === n; }) ||
+    (n.length >= 3 ? list.find(function(x){ var m = norm(x.name); return m.indexOf(n) >= 0 || n.indexOf(m) >= 0; }) : null) || null;
+}
+var TYPE_FR = {income:'entrée d\'argent', fixed:'charge fixe', variable:'catégorie'};
+/* mutates cfg; returns readable lines */
+function applyOps(cfg, ops){
+  var lines = [];
+  var nonVar = function(){ return cfg.items.filter(function(i){ return i.type !== 'variable'; }); };
+  var vars = function(){ return cfg.items.filter(function(i){ return i.type === 'variable'; }); };
+  (ops || []).forEach(function(op){
+    var it, d;
+    if (op.op === 'set_amount') {
+      it = findBy(nonVar(), op.target);
+      if (!it) { lines.push({t:'Introuvable : ' + op.target + ' (ignoré)', miss:true}); return; }
+      var old = +it.amount || 0; it.amount = Math.max(0, round2(+op.amount || 0));
+      lines.push({t:it.name + ' : ' + eur(old) + ' → ' + eur(it.amount) + ' par mois'});
+    } else if (op.op === 'add_item') {
+      var type = op.type === 'fixed' ? 'fixed' : op.type === 'variable' ? 'variable' : 'income';
+      var o = {id:op.id || ('i-' + uid()), type:type, name:String(op.name || 'Sans nom').slice(0, 60), amount:Math.max(0, round2(+op.amount || 0)), note:''};
+      if (type === 'income') o.group = op.group === 'salary' || op.group === 'family' ? op.group : 'other';
+      cfg.items.push(o);
+      lines.push({t:'Ajout (' + TYPE_FR[type] + ') : ' + o.name + (type === 'variable' ? ' · part ' + o.amount + ' %' : ' · ' + eur(o.amount) + ' par mois')});
+    } else if (op.op === 'remove_item') {
+      it = findBy(cfg.items, op.target);
+      if (!it) { lines.push({t:'Introuvable : ' + op.target + ' (ignoré)', miss:true}); return; }
+      cfg.items = cfg.items.filter(function(x){ return x.id !== it.id; });
+      lines.push({t:'Suppression : ' + it.name});
+    } else if (op.op === 'set_share') {
+      it = findBy(vars(), op.target);
+      if (!it) { lines.push({t:'Introuvable : ' + op.target + ' (ignoré)', miss:true}); return; }
+      var os = +it.amount || 0; it.amount = Math.max(0, round2(+op.amount || 0));
+      lines.push({t:it.name + ' : part ' + os + ' % → ' + it.amount + ' %'});
+    } else if (op.op === 'set_active') {
+      it = findBy(vars(), op.target);
+      if (!it) { lines.push({t:'Introuvable : ' + op.target + ' (ignoré)', miss:true}); return; }
+      if (op.active === false) it.active = false; else delete it.active;
+      lines.push({t:it.name + ' : ' + (op.active === false ? 'décochée' : 'cochée')});
+    } else if (op.op === 'set_debt') {
+      d = findBy(cfg.debts, op.target);
+      if (!d) { lines.push({t:'Introuvable : ' + op.target + ' (ignoré)', miss:true}); return; }
+      if (op.monthly != null) { var om = +d.monthly || 0; d.monthly = Math.max(0, round2(+op.monthly || 0)); lines.push({t:d.name + ' : mensualité ' + eur(om) + ' → ' + eur(d.monthly)}); }
+      if (op.start != null) { var os2 = +d.start || 0; d.start = Math.max(0, round2(+op.start || 0)); lines.push({t:d.name + ' : montant de départ ' + eur(os2) + ' → ' + eur(d.start)}); }
+    } else if (op.op === 'add_debt') {
+      d = {id:op.id || ('d-' + uid()), name:String(op.name || 'Dette').slice(0, 60), start:Math.max(0, round2(+op.start || 0)), monthly:Math.max(0, round2(+op.monthly || 0)), from:addMonths(nowMonth(), 1), skipped:[], note:''};
+      cfg.debts.push(d);
+      lines.push({t:'Nouvelle dette : ' + d.name + ' · ' + eur(d.start) + ', ' + eur(d.monthly) + ' par mois'});
+    } else if (op.op === 'remove_debt') {
+      d = findBy(cfg.debts, op.target);
+      if (!d) { lines.push({t:'Introuvable : ' + op.target + ' (ignoré)', miss:true}); return; }
+      cfg.debts = cfg.debts.filter(function(x){ return x.id !== d.id; });
+      lines.push({t:'Dette supprimée : ' + d.name});
+    }
+  });
+  return lines;
+}
+function cleanOps(raw){
+  var okOps = {set_amount:1, add_item:1, remove_item:1, set_share:1, set_active:1, set_debt:1, add_debt:1, remove_debt:1};
+  return (Array.isArray(raw) ? raw : []).filter(function(o){ return o && okOps[o.op]; }).slice(0, 14).map(function(o){
+    var c = {op:o.op};
+    ['target','name','type','group'].forEach(function(k){ if (o[k] != null) c[k] = String(o[k]).slice(0, 80); });
+    ['amount','monthly','start'].forEach(function(k){ if (o[k] != null && isFinite(+o[k])) c[k] = +o[k]; });
+    if (o.active != null) c.active = o.active !== false && o.active !== 'false';
+    if (o.op === 'add_item') c.id = 'i-' + uid();
+    if (o.op === 'add_debt') c.id = 'd-' + uid();
+    return c;
+  });
+}
+function effCfg(){ var c = JSON.parse(JSON.stringify(S.cfg)); S.sim.forEach(function(it){ applyOps(c, it.ops); }); return c; }
+function metricsOf(cfg){
+  return withCfg(cfg, function(){
+    var infos = cfg.debts.map(dInfo), ds = dailyStats(nowMonth(), infos), ends = infos.map(endMonthOf).filter(Boolean);
+    return {income:planIncome(), fixed:planFixed(), debts:monthlyDebts(infos), left:round2(ds.left), end:ends.length ? maxStr(ends) : null};
+  });
+}
+function simHTML(){
+  if (!S.sim.length) return '';
+  var A = metricsOf(S.realCfg || S.cfg), B = metricsOf(S.cfg);
+  var rowsM = [['Entrées par mois','income',1],['Charges fixes','fixed',-1],['Mensualités des dettes','debts',-1],['Disponible pour le quotidien','left',1]].filter(function(r){ return Math.abs(A[r[1]] - B[r[1]]) > 0.004; }).map(function(r){
+    var up = (B[r[1]] - A[r[1]]) * r[2] > 0;
+    return '<div><span>' + r[0] + '</span><span class="v ' + (up ? 'up' : 'down') + '">' + eur(A[r[1]]) + ' → ' + eur(B[r[1]]) + '</span></div>';
+  });
+  if (A.end !== B.end) rowsM.push('<div><span>Fin des dettes</span><span class="v">' + (A.end ? monthLabel(A.end) : '—') + ' → ' + (B.end ? monthLabel(B.end) : '—') + '</span></div>');
+  var its = S.sim.map(function(it, k){
+    return '<div class="sit"><div class="sit-top"><span class="num">' + (k + 1) + '</span><span class="sit-q">« ' + esc(it.q) + ' »</span></div>' +
+      '<ul>' + it.lines.map(function(l){ return '<li' + (l.miss ? ' class="miss"' : '') + '>' + esc(l.t) + '</li>'; }).join('') + '</ul>' +
+      '<div class="sit-acts"><button class="btn sm primary" data-action="sim-ok" data-id="' + esc(it.id) + '">Valider</button><button class="btn sm ghost" data-action="sim-no" data-id="' + esc(it.id) + '">Annuler</button></div></div>';
+  }).join('');
+  return '<section class="card sim" aria-label="Simulation en cours"><div><h2>Simulation en cours</h2><p class="lead">Les chiffres de l\'application tiennent compte de ces essais. Rien n\'est enregistré tant que vous ne validez pas.</p></div>' + its +
+    '<div class="impact"><h3>Effet sur le budget</h3>' + (rowsM.length ? rowsM.join('') : '<div><span>Aucun effet sur les totaux</span></div>') + '</div>' +
+    '<div class="sim-foot"><button class="btn primary" data-action="sim-ok-all">Tout valider</button><button class="btn" data-action="sim-no-all">Tout annuler</button></div></section>';
+}
+function simOk(id){
+  var list = id ? S.sim.filter(function(x){ return x.id === id; }) : S.sim.slice();
+  if (!list.length) return;
+  list.forEach(function(it){ applyOps(S.cfg, it.ops); });
+  S.sim = S.sim.filter(function(x){ return list.indexOf(x) < 0; });
+  persistCfg(); saveSim(); render();
+  toast(list.length > 1 ? 'Modifications enregistrées pour tous' : 'Modification enregistrée pour tous');
+}
+function simNo(id){ S.sim = id ? S.sim.filter(function(x){ return x.id !== id; }) : []; saveSim(); render(); toast(id ? 'Essai annulé' : 'Simulation annulée'); }
+function simBlock(){ if (S.sim.length) { toast('Validez ou annulez la simulation avant de modifier le budget à la main.'); return true; } return false; }
 
 /* ---------- computations ---------- */
 function nowMonth(){ return monthOf(todayISO()); }
@@ -756,7 +882,7 @@ function askHTML(){
   var card = '';
   if (S.askAsked) {
     card = '<section class="card ans"><p class="q">' + esc(S.askAsked) + '</p><div class="a" id="ask-out">' + (S.askOut ? fmtAns(S.askOut) : '<span class="tiny">Claude réfléchit…</span>') + '</div>' +
-      '<div class="foot"><span class="tiny">Simulation : rien n\'est modifié dans votre budget.</span>' +
+      '<div class="foot"><span class="tiny">Les modifications demandées apparaissent dans la simulation.</span>' +
       (S.askBusy ? '<button class="btn sm" data-action="ask-stop">Arrêter</button>' : '<button class="btn sm ghost" data-action="ask-close">Fermer</button>') + '</div></section>';
   }
   return bar + card;
@@ -779,14 +905,16 @@ function view(){
   if (!S.cfg.items.length && !S.cfg.debts.length) return head + banner + emptyBudget();
   var infos = S.cfg.debts.map(dInfo);
   var panel = S.tab === 'debts' ? debtsPanel(infos) : S.tab === 'fixed' ? fixedPanel() : S.tab === 'daily' ? dailyPanel(infos) : S.tab === 'income' ? incomePanel() : '';
-  return head + banner + (S.sample ? askHTML() : '') + heroHTML(infos) + tabsHTML(infos) + (panel ? '<div class="panel" role="tabpanel">' + panel + '</div>' : '') + (S.tab ? '' : chartHTML(infos) + installHTML());
+  return head + banner + (S.sample ? askHTML() : '') + simHTML() + heroHTML(infos) + tabsHTML(infos) + (panel ? '<div class="panel" role="tabpanel">' + panel + '</div>' : '') + (S.tab ? '' : chartHTML(infos) + installHTML());
 }
 function render(){
   var app = $('#app');
   var act = document.activeElement, key = act && act.dataset ? act.dataset.k : null;
   var hadText = act && (act.id === 'qa-text' || act.id === 'ask-text');
   var sy = window.scrollY;
-  app.innerHTML = view();
+  var html;
+  if (S.sim.length) { var realC = S.cfg; S.realCfg = realC; S.cfg = effCfg(); try { html = view(); } finally { S.cfg = realC; } } else { S.realCfg = null; html = view(); }
+  app.innerHTML = html;
   if (key) {
     var n = app.querySelector('[data-k="' + key + '"]');
     if (n) { n.focus({preventScroll:true}); if (hadText && n.setSelectionRange) { var L = n.value.length; n.setSelectionRange(L, L); } }
@@ -916,16 +1044,18 @@ async function handleScan(file){
 
 /* ---------- smart bar: ask Claude ---------- */
 function budgetContext(){
-  var infos = S.cfg.debts.map(dInfo), ds = dailyStats(nowMonth(), infos);
-  var inc = itemsOf('income'), fx = itemsOf('fixed');
-  var ctx = {
-    entrees_par_mois: inc.map(function(i){ return {nom:i.name, montant:+i.amount || 0}; }),
-    charges_fixes_par_mois: fx.map(function(i){ return {nom:i.name, montant:+i.amount || 0}; }),
-    dettes: infos.map(function(i){ return {nom:i.d.name, dette_de_depart:i.start, deja_rembourse:i.paid, reste:i.rem, mensualite:i.mo}; }),
-    budget_quotidien_par_mois: itemsOf('variable').map(function(i){ return {nom:i.name, active:isOn(i), budget:ds.bud[i.id] || 0}; }),
-    totaux: {entrees:planIncome(), charges_fixes:planFixed(), mensualites_dettes:monthlyDebts(infos), disponible_pour_le_quotidien:round2(ds.left)}
-  };
-  return JSON.stringify(ctx);
+  var cfg = S.sim.length ? effCfg() : S.cfg;
+  return withCfg(cfg, function(){
+    var infos = cfg.debts.map(dInfo), ds = dailyStats(nowMonth(), infos);
+    var inc = itemsOf('income'), fx = itemsOf('fixed');
+    return JSON.stringify({
+      entrees_par_mois: inc.map(function(i){ return {id:i.id, nom:i.name, montant:+i.amount || 0}; }),
+      charges_fixes_par_mois: fx.map(function(i){ return {id:i.id, nom:i.name, montant:+i.amount || 0}; }),
+      dettes: infos.map(function(i){ return {id:i.d.id, nom:i.d.name, dette_de_depart:i.start, reste:i.rem, mensualite:i.mo}; }),
+      budget_quotidien_par_mois: itemsOf('variable').map(function(i){ return {id:i.id, nom:i.name, active:isOn(i), part_pourcent:+i.amount || 0, budget:ds.bud[i.id] || 0}; }),
+      totaux: {entrees:planIncome(), charges_fixes:planFixed(), mensualites_dettes:monthlyDebts(infos), disponible_pour_le_quotidien:round2(ds.left)}
+    });
+  });
 }
 function startMic(){
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -953,20 +1083,33 @@ async function askClaude(q){
   if (!q || !S.sample || S.askBusy) return;
   var ctl = new AbortController(); S.askCtl = ctl; S.askBusy = true; S.askAsked = q; S.askOut = ''; S.askQ = '';
   render();
-  var prompt = 'Tu es l\'assistant du budget familial de M\'ziza (France, montants en euros par mois). Voici ses chiffres actuels au format JSON :\n' + budgetContext() +
-    '\n\nQuestion de l\'utilisatrice : "' + q.replace(/"/g, "'") + '"\n\n' +
-    'Règles : réponds en français simple, sans tableau ni jargon, en 120 à 200 mots. Utilise uniquement ces chiffres, applique les changements demandés puis recalcule étape par étape (entrées − charges fixes − mensualités de dettes = disponible pour le quotidien) et vérifie tes additions. ' +
-    'Donne les nouveaux totaux. Si la demande creuse un déficit, dis combien il manque par mois, puis propose dans cet ordre : (1) combien d\'aide ou de participation supplémentaire des enfants il faudrait, (2) à défaut, de quel montant renégocier les mensualités des dettes, dette par dette (nouvelle mensualité proposée et nouvelle durée approximative), en gardant en dernier recours le loyer et les charges vitales. ' +
-    'Termine par une phrase sur la meilleure option. Ne propose aucune modification automatique de l\'application.';
+  var prompt = 'Tu es l\'assistant du budget familial de M\'ziza (France, montants en euros par mois). Voici l\'état actuel (simulation en cours comprise) au format JSON :\n' + budgetContext() +
+    '\n\nDemande de l\'utilisatrice : "' + q.replace(/"/g, "'") + '"\n\n' +
+    'Réponds UNIQUEMENT par un objet JSON {"reponse": "...", "changes": [...]}.\n' +
+    '- "reponse" : français simple, 50 à 120 mots, sans markdown : ce que tu as modifié, ou la réponse à la question.\n' +
+    '- "changes" : modifications à appliquer dans l\'application. Remplis-la quand la demande est une instruction ou une hypothèse à simuler (« ajoute », « mets », « supprime », « et si Andreia donne 50 € »). Pour une simple question de calcul (« combien faudrait-il… »), laisse-la vide et réponds par le calcul (entrées − charges fixes − mensualités = disponible pour le quotidien) ; en cas de déficit, indique d\'abord l\'aide supplémentaire nécessaire, puis de combien renégocier les mensualités dette par dette, et propose d\'appliquer ces pistes en simulation.\n' +
+    'Formes possibles d\'une modification (target = id ou nom exact) :\n' +
+    '{"op":"set_amount","target":"...","amount":N} entrée d\'argent ou charge fixe\n' +
+    '{"op":"add_item","type":"income|fixed","name":"...","amount":N,"group":"salary|family|other"}\n' +
+    '{"op":"remove_item","target":"..."}\n' +
+    '{"op":"set_share","target":"...","amount":N} part en % d\'une catégorie du budget quotidien\n' +
+    '{"op":"set_active","target":"...","active":true|false} catégorie du quotidien\n' +
+    '{"op":"set_debt","target":"...","monthly":N,"start":N}\n' +
+    '{"op":"add_debt","name":"...","start":N,"monthly":N}\n' +
+    '{"op":"remove_debt","target":"..."}';
   try {
-    var r = await S.sample(prompt, {modelTier:'default', signal:ctl.signal, onText:function(o){
-      S.askOut = o.text; var el = $('#ask-out'); if (el) el.innerHTML = fmtAns(o.text);
-    }});
-    S.askOut = r.text || S.askOut;
+    var r = await S.sample.json(prompt, {modelTier:'default', signal:ctl.signal, cache:false});
+    var ops = cleanOps(r && r.changes), text = String((r && r.reponse) || '').trim();
+    if (ops.length) {
+      var lines = applyOps(JSON.parse(JSON.stringify(effCfg())), ops);
+      S.sim.push({id:'s-' + uid(), q:q, ops:ops, lines:lines, t:Date.now()}); saveSim();
+      text = (text || 'Modification ajoutée à la simulation.') + '\n\n' + (ops.length > 1 ? ops.length + ' modifications ajoutées' : 'Modification ajoutée') + ' à la simulation. Validez-les ou annulez-les en haut de la page.';
+    }
+    S.askOut = text || 'Je n\'ai rien à modifier pour cette demande.';
   } catch(e) {
-    if (e && e.code === 'cancelled') { if (!S.askOut) S.askAsked = ''; }
+    if (e && e.code === 'cancelled') { S.askAsked = ''; }
     else if (e && e.code === 'not_granted') { S.askOut = 'La question n\'a pas pu être envoyée : l\'autorisation de contacter Claude a été refusée.'; }
-    else if (!S.askOut) { S.askOut = 'Claude n\'a pas pu répondre pour le moment. Réessayez dans un instant.'; }
+    else { S.askOut = 'Claude n\'a pas pu répondre pour le moment. Réessayez dans un instant.'; }
   } finally { S.askBusy = false; S.askCtl = null; render(); }
 }
 
@@ -1117,6 +1260,11 @@ document.addEventListener('click', function(e){
   if (a === 'close') return closeModal();
   if (a === 'tab') { S.tab = S.tab === el.dataset.tab ? null : el.dataset.tab; render(); return; }
   if (a === 'mic') { startMic(); return; }
+  if (a === 'sim-ok') return simOk(el.dataset.id);
+  if (a === 'sim-no') return simNo(el.dataset.id);
+  if (a === 'sim-ok-all') return simOk();
+  if (a === 'sim-no-all') return simNo();
+  if ((a === 'add-item' || a === 'edit-item' || a === 'open-skip' || a === 'scan-pick' || a === 'open-move' || a === 'quick') && simBlock()) return;
   if (a === 'home') { S.tab = null; render(); window.scrollTo({top:0}); return; }
   if (a === 'ask-close') { S.askAsked = ''; S.askOut = ''; render(); return; }
   if (a === 'ask-stop') { if (S.askCtl) S.askCtl.abort(); return; }
@@ -1158,7 +1306,7 @@ document.addEventListener('submit', function(e){
   if (k === 'move' && S.m) submitMove();
   else if (k === 'item' && S.i) submitItem(f);
   else if (k === 'skip' && S.sk) submitSkip();
-  else if (k === 'qa') quickAdd(S.qa);
+  else if (k === 'qa') { if (!simBlock()) quickAdd(S.qa); }
   else if (k === 'ask') askClaude(S.askQ);
 });
 document.addEventListener('input', function(e){
@@ -1174,6 +1322,7 @@ document.addEventListener('input', function(e){
 document.addEventListener('change', function(e){
   var id = e.target.id;
   if (e.target.dataset && e.target.dataset.toggle) {
+    if (S.sim.length) { e.target.checked = !e.target.checked; simBlock(); return; }
     var ci = S.cfg.items.find(function(x){ return x.id === e.target.dataset.toggle; });
     if (ci) { if (e.target.checked) delete ci.active; else ci.active = false; persistCfg(); render(); }
     return;
@@ -1195,6 +1344,7 @@ window.addEventListener('resize', function(){
 });
 
 /* ---------- boot ---------- */
+loadSim();
 render();
 var claudeApi = window.claude && window.claude.use ? window.claude : null;
 if (claudeApi) {
