@@ -916,7 +916,7 @@ function monthTitle(m){
   return 'Mois ' + (/^[aeiouyàâéèêîôû]/i.test(n) ? 'd\'' : 'de ') + n;
 }
 function monthCardHTML(infos){
-  var m = S.cm || nowMonth(), now = nowMonth(), ds = dailyStats(m, infos), oi = odInfo(m), od = oi.v, rest = round2(ds.left - ds.rDay);
+  var m = S.month, now = nowMonth(), ds = dailyStats(m, infos), oi = odInfo(m), od = oi.v, rest = round2(ds.left - ds.rDay);
   var line = function(label, v, cls){ return '<div class="ml' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span><b>' + v + '</b></div>'; };
   var firstDebt = S.cfg.debts.map(debtFrom).filter(function(f){ return f > m; }).sort()[0];
   var debtLabel = 'Dettes' + (!ds.debts && firstDebt ? ' <small class="mnote">prélevées à partir de ' + esc(monthLabel(firstDebt)) + '</small>' : '');
@@ -1178,7 +1178,7 @@ var PAGES = {
 };
 function pendingAlerts(){ return S.doc && Array.isArray(S.doc.alerts) ? S.doc.alerts.filter(function(a){ return !a.state; }).length : 0; }
 function tabsHTML(infos){
-  var ds = dailyStats(nowMonth(), infos);
+  var ds = dailyStats(S.month, infos);
   var subs = {
     debts:[eur(sum(infos, function(i){ return i.rem; })) + ' restants', eur(monthlyDebts(infos)) + ' par mois'],
     fixed:[eur(planFixed()) + ' par mois'],
@@ -1827,7 +1827,7 @@ function itemHTML(){
   var eurMode = I.type === 'variable' && I.id;
   var amountLabel = eurMode ? 'Budget par mois (€)' : I.type === 'variable' ? 'Part du budget (en %)' : 'Montant par mois (€)';
   var grp = '';
-  if (eurMode) grp = '<p class="dinfo">Disponible pour le quotidien : <b>' + eur(I.env) + '</b> par mois. Les autres catégories cochées se partagent ce qui reste.</p>';
+  if (eurMode) grp = '<p class="dinfo">Disponible pour le quotidien en ' + esc(monthLabel(S.month)) + ' : <b>' + eur(I.env) + '</b>. Les autres catégories cochées se partagent ce qui reste, et cette répartition vaut pour tous les mois.</p>';
   if (I.type === 'income') {
     var go = function(v, l){ return '<option value="' + v + '"' + (I.group === v ? ' selected' : '') + '>' + l + '</option>'; };
     grp = '<div class="field"><label for="i-group">Type d\'entrée</label><select id="i-group" name="group">' + go('salary','Salaire') + go('family','Participation d\'un enfant') + go('other','Aide ou autre entrée') + '</select></div>';
@@ -1846,14 +1846,14 @@ function openItem(type, id){
   S.i = it ? {id:it.id, type:it.type, name:it.name, amount:fmtIn(it.amount||0), note:it.note||'', group:gOf(it)} : {id:null, type:type, name:'', amount:'', note:'', group:'other'};
   if (it && it.type === 'variable') {
     /* daily categories are edited in euros; the stored value stays a share (%) */
-    var ds = dailyStats(nowMonth(), S.cfg.debts.map(dInfo));
+    var ds = dailyStats(S.month, S.cfg.debts.map(dInfo));
     S.i.env = ds.env; S.i.amount = fmtIn(isOn(it) ? (ds.bud[it.id] || 0) : 0);
   }
   showModal(itemHTML(), it ? '#i-amount' : '#i-name');
 }
 /* sets one daily category to `x` euros a month; the other checked categories share the rest in their current proportions */
 function setCategoryEuros(id, x, env){
-  var bud = dailyStats(nowMonth(), S.cfg.debts.map(dInfo)).bud;
+  var bud = dailyStats(S.month, S.cfg.debts.map(dInfo)).bud;
   var others = itemsOf('variable').filter(function(c){ return isOn(c) && c.id !== id; });
   var restOld = sum(others, function(c){ return bud[c.id] || 0; }), restNew = env - x;
   var w = function(e){ return Math.round(e / env * 1e6) / 1e4; };
@@ -2029,8 +2029,8 @@ document.addEventListener('click', function(e){
   if (a === 'edit-debt') return openDebt(el.dataset.id);
   if (a === 'add-debt') return openDebt(null);
   if (a === 'od-edit') return openOd(el.dataset.m || nowMonth());
-  if (a === 'cm-prev' || a === 'cm-next') { S.cm = addMonths(S.cm || nowMonth(), a === 'cm-prev' ? -1 : 1); render(); return; }
-  if (a === 'cm-now') { S.cm = null; render(); return; }
+  if (a === 'cm-prev' || a === 'cm-next') { S.month = addMonths(S.month, a === 'cm-prev' ? -1 : 1); render(); return; }
+  if (a === 'cm-now') { S.month = nowMonth(); render(); return; }
   if (a === 'od-clear') { if (S.od) saveOd(S.od.m, 0); return; }
   if (a === 'od-auto') { if (S.od) saveOd(S.od.m, null); return; }
   if (a === 'ex-edit') return openExtra(el.dataset.m || nowMonth(), el.dataset.id || null);
@@ -2205,6 +2205,8 @@ window.addEventListener('resize', function(){
 });
 
 /* ---------- boot ---------- */
+/* a page reloaded while a tab page was open must not keep that old history entry (the home button relies on it) */
+try { if (history.state && history.state.mzPage) history.replaceState(null, ''); } catch(e){}
 render();
 var claudeApi = window.claude && window.claude.use ? window.claude : null;
 if (claudeApi) {
