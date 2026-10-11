@@ -381,6 +381,14 @@ header.top h1{font-size:inherit}h1 .home:focus-visible{outline:2px solid var(--a
 .irow .r{display:flex;align-items:center;gap:10px}
 .field textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2);font:inherit;font-size:16px;resize:vertical;min-height:80px}
 .dinfo{font-size:13.5px;color:var(--muted)}
+.dmode{border:1px solid var(--line);border-radius:14px;padding:10px 12px 12px;margin:0;display:flex;flex-direction:column;gap:8px}
+.dmode legend{font-size:13px;color:var(--muted);font-weight:500;padding:0 4px}
+.dmode label,.dcheck{display:flex;gap:10px;align-items:flex-start;cursor:pointer;font-weight:600;font-size:15px}
+.dmode input,.dcheck input{width:20px;height:20px;margin:1px 0 0;accent-color:var(--accent);flex:0 0 auto}
+.dmode small,.dcheck small{display:block;font-weight:400;font-size:12.5px;color:var(--muted)}
+.dstat{font-size:13.5px;font-weight:600;border-radius:10px;padding:6px 10px}
+.dstat.nego{background:var(--warn-soft);color:var(--warn)}
+.dstat.paid{background:var(--accent-soft);color:var(--accent)}
 .dinfo b{color:var(--ink)}
 /* curve: tap to open in full screen */
 .chart-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
@@ -439,6 +447,8 @@ button.ml{all:unset;display:flex;justify-content:space-between;align-items:basel
 button.ml.od b{color:var(--bad)}
 button.ml.od small{font-size:12px;color:var(--accent);font-weight:600;margin-left:6px}
 button.ml.add span{color:var(--accent);font-weight:600}
+button.ml.ex b{color:var(--accent)}
+button.ml.ex small{font-size:12px;color:var(--accent);font-weight:600;margin-left:6px}
 button.ml:hover{background:var(--surface-2)}
 button.ml:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .mtotal{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;background:var(--accent-soft)}
@@ -525,6 +535,7 @@ function normCfg(d){
   c.debts = Array.isArray(c.debts) ? c.debts : [];
   c.startDate = c.startDate || todayISO();
   c.od = c.od && typeof c.od === 'object' ? c.od : {};
+  c.extra = c.extra && typeof c.extra === 'object' ? c.extra : {};
   return c;
 }
 
@@ -751,15 +762,23 @@ var colorOf = function(idx){ return 'var(--c' + ((idx % 6) + 1) + ')'; };
 
 /* Debts are debited automatically every month from `from`. A month listed in `skipped` was not debited. */
 function debtFrom(d){ return d.from || addMonths(monthOf(S.cfg.startDate), 1); }
+/* a debt is 'monthly' (default: debited every month), 'nego' (still being negotiated: counted, never debited)
+   or 'paid' (settled at once on paidOn, by paidBy; paidSelf = taken from M'ziza's money that month) */
+function debtMode(d){ return d.mode === 'nego' || (d.mode === 'paid' && d.paidOn) ? d.mode : 'monthly'; }
 function payCount(d, upTo){
+  if (debtMode(d) === 'nego') return 0;
   var from = debtFrom(d), sk = d.skipped || [], n = 0, guard = 0;
   for (var m = from; m <= upTo && guard < 240; m = addMonths(m, 1), guard++) { if (sk.indexOf(m) < 0) n++; }
   return n;
 }
-function paidAt(d, m){ return Math.min(Math.max(0, +d.start || 0), round2(payCount(d, m) * (+d.monthly || 0))); }
+function paidAt(d, m){
+  var start = Math.max(0, +d.start || 0);
+  if (debtMode(d) === 'paid' && m >= monthOf(d.paidOn)) return start;
+  return Math.min(start, round2(payCount(d, m) * (+d.monthly || 0)));
+}
 function dInfo(d){
-  var start = Math.max(0, +d.start || 0), mo = Math.max(0, +d.monthly || 0), paid = paidAt(d, nowMonth());
-  return {d:d, start:start, mo:mo, paid:paid, rem:Math.max(0, start - paid), pct:start > 0 ? Math.min(1, paid / start) : 0};
+  var start = Math.max(0, +d.start || 0), mode = debtMode(d), mo = mode === 'monthly' ? Math.max(0, +d.monthly || 0) : 0, paid = paidAt(d, nowMonth());
+  return {d:d, mode:mode, start:start, mo:mo, paid:paid, rem:Math.max(0, start - paid), pct:start > 0 ? Math.min(1, paid / start) : 0};
 }
 function endMonthOf(i){
   if (!(i.mo > 0 && i.rem > 0)) return null;
@@ -790,7 +809,7 @@ function dailyStats(m, infos){
   var dayTx = txMonth(m).filter(function(t){ return t.kind === 'expense' && !fixedIds[t.ref]; });
   var rDay = sum(dayTx, function(t){ return +t.amount || 0; });
   var debts = debtsDue(m);
-  var left = planIncome() - planFixed() - debts - odOf(m);
+  var left = planIncome() + extraOf(m) - planFixed() - debts - odOf(m);
   var bud = dailyBudgets(left);
   var env = sum(Object.keys(bud), function(k){ return bud[k]; });
   return {items:items, dayTx:dayTx, rDay:rDay, env:env, left:left, debts:debts, bud:bud, base:env > 0 ? env : Math.max(0, left)};
@@ -798,6 +817,13 @@ function dailyStats(m, infos){
 /* what the debts really take in month m: only debts already started, not skipped that month, and not yet paid off */
 function debtsDue(m){
   return round2(sum(S.cfg.debts, function(d){
+    var mode = debtMode(d);
+    if (mode === 'nego') return 0;
+    if (mode === 'paid') {
+      var pm = monthOf(d.paidOn);
+      if (m > pm) return 0;
+      if (m === pm) return d.paidSelf ? Math.max(0, (+d.start || 0) - paidAt(d, addMonths(m, -1))) : 0;
+    }
     if (m < debtFrom(d) || (d.skipped || []).indexOf(m) >= 0) return 0;
     var before = Math.max(0, (+d.start || 0) - paidAt(d, addMonths(m, -1)));
     return Math.min(Math.max(0, +d.monthly || 0), before);
@@ -809,12 +835,14 @@ function etaText(infos){
   var open = infos.filter(function(i){ return i.rem > 0; });
   if (!open.length) return 'Toutes les dettes sont remboursées.';
   var pay = open.filter(function(i){ return i.mo > 0; });
-  var none = open.filter(function(i){ return i.mo <= 0; });
+  var nego = open.filter(function(i){ return i.mode === 'nego'; });
+  var none = open.filter(function(i){ return i.mo <= 0 && i.mode !== 'nego'; });
   var parts = [];
   if (pay.length) {
     var endAll = maxStr(pay.map(endMonthOf));
     parts.push('Prélèvements automatiques de ' + eur(sum(pay, function(i){ return i.mo; })) + ' par mois. Dernière échéance prévue en ' + monthLabel(endAll) + '.');
   }
+  if (nego.length) parts.push(eur(sum(nego, function(i){ return i.rem; })) + ' en négociation (' + nego.map(function(i){ return i.d.name; }).join(', ') + ').');
   if (none.length) parts.push(eur(sum(none, function(i){ return i.rem; })) + ' sans mensualité définie (' + none.map(function(i){ return i.d.name; }).join(', ') + ').');
   return parts.join(' ');
 }
@@ -867,15 +895,28 @@ function heroHTML(infos){
     '<p class="eta">' + esc(etaText(infos)) + '</p></div></section>';
 }
 
-/* overdraft at the start of a month (stored per month in cfg.od): it is taken out of that month's money */
-function odOf(m){ return Math.max(0, +((S.cfg.od || {})[m]) || 0); }
+/* overdraft at the start of a month: typed by hand (cfg.od[m], 0 = none), otherwise carried over automatically
+   from what was missing at the end of the previous month. It is taken out of that month's money. */
+function odInfo(m){
+  var od = S.cfg.od || {};
+  if (Object.prototype.hasOwnProperty.call(od, m)) return {v:Math.max(0, +od[m] || 0), manual:true};
+  if (m <= monthOf(S.cfg.startDate || todayISO())) return {v:0};
+  var prev = addMonths(m, -1), ps = dailyStats(prev, null), miss = round2(ps.rDay - ps.left);
+  return {v:miss > 0 ? miss : 0, carried:miss > 0, from:prev};
+}
+function odOf(m){ return odInfo(m).v; }
+/* one-off money received in a month (cfg.extra[m] = [{id, name, amount}]) */
+function extrasOf(m){ var e = (S.cfg.extra || {})[m]; return Array.isArray(e) ? e : []; }
+function extraOf(m){ return round2(sum(extrasOf(m), function(x){ return Math.max(0, +x.amount || 0); })); }
+function monthName(m){ return new Date(+m.slice(0, 4), +m.slice(5, 7) - 1, 1).toLocaleDateString('fr-FR', {month:'long'}); }
+function deMonth(m){ var n = monthName(m); return (/^[aeiouyàâéèêîôû]/i.test(n) ? 'd\'' : 'de ') + n; }
 function monthTitle(m){
   if (m === nowMonth()) return 'Ce mois-ci';
   var n = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1, 1).toLocaleDateString('fr-FR', {month:'long'});
   return 'Mois ' + (/^[aeiouyàâéèêîôû]/i.test(n) ? 'd\'' : 'de ') + n;
 }
 function monthCardHTML(infos){
-  var m = S.cm || nowMonth(), now = nowMonth(), ds = dailyStats(m, infos), od = odOf(m), rest = round2(ds.left - ds.rDay);
+  var m = S.cm || nowMonth(), now = nowMonth(), ds = dailyStats(m, infos), oi = odInfo(m), od = oi.v, rest = round2(ds.left - ds.rDay);
   var line = function(label, v, cls){ return '<div class="ml' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span><b>' + v + '</b></div>'; };
   var firstDebt = S.cfg.debts.map(debtFrom).filter(function(f){ return f > m; }).sort()[0];
   var debtLabel = 'Dettes' + (!ds.debts && firstDebt ? ' <small class="mnote">prélevées à partir de ' + esc(monthLabel(firstDebt)) + '</small>' : '');
@@ -887,9 +928,13 @@ function monthCardHTML(infos){
     (m !== now ? '<button class="mback" data-action="cm-now" data-k="cm-now">Revenir à ce mois-ci</button>' : '') +
     '<div class="mlines">' +
     line('Entrées d\'argent', '+ ' + esc(eur(planIncome())), 'up') +
+    extrasOf(m).map(function(x){
+      return '<button class="ml ex" data-action="ex-edit" data-m="' + m + '" data-id="' + esc(x.id) + '" data-k="ex-' + esc(x.id) + '"><span>' + esc(x.name || 'Rentrée ponctuelle') + ' <small>ponctuel · modifier</small></span><b>+ ' + esc(eur(x.amount)) + '</b></button>';
+    }).join('') +
+    '<button class="ml add" data-action="ex-edit" data-m="' + m + '" data-k="ex-add"><span>+ Ajouter une rentrée ponctuelle</span><b></b></button>' +
     line('Charges fixes', '− ' + esc(eur(planFixed()))) +
     line(debtLabel, '− ' + esc(eur(ds.debts))) +
-    (od ? '<button class="ml od" data-action="od-edit" data-m="' + m + '" data-k="od-h"><span>Découvert à combler <small>modifier</small></span><b>− ' + esc(eur(od)) + '</b></button>' :
+    (od ? '<button class="ml od" data-action="od-edit" data-m="' + m + '" data-k="od-h"><span>' + (oi.carried ? 'Découvert reporté ' + esc(deMonth(oi.from)) : 'Découvert à combler') + ' <small>modifier</small></span><b>− ' + esc(eur(od)) + '</b></button>' :
       '<button class="ml od add" data-action="od-edit" data-m="' + m + '" data-k="od-h"><span>+ Indiquer un découvert</span><b></b></button>') +
     line('Pour le quotidien', ds.left < 0 ? '<span class="cross" role="img" aria-label="Plus rien pour le quotidien">✕</span>' : esc(eur(ds.left)), 'sub' + (ds.left < 0 ? ' bad' : '')) +
     line(m > now ? 'Dépensé' : 'Déjà dépensé', '− ' + esc(eur(ds.rDay))) +
@@ -897,17 +942,45 @@ function monthCardHTML(infos){
 }
 function openOd(m){
   S.od = {m:m};
-  var v = odOf(m);
-  showModal('<h2>Découvert</h2><p class="lead">Montant du découvert au début de ' + esc(monthLabel(m)) + ', tel qu\'il apparaît sur le compte. Il est retiré de l\'argent du quotidien de ce mois.</p>' +
+  var oi = odInfo(m), v = oi.v, prev = addMonths(m, -1);
+  var auto = oi.carried ? '<p class="dinfo">Ce montant est <b>reporté automatiquement</b> : c\'est ce qui a manqué à la fin ' + esc(deMonth(prev)) + '. Si le compte montre un autre chiffre, tapez-le.</p>' :
+    oi.manual ? '<p class="dinfo">Montant saisi à la main. Sans saisie, l\'application reporte d\'elle-même ce qui a manqué à la fin ' + esc(deMonth(prev)) + '.</p>' : '';
+  showModal('<h2>Découvert</h2><p class="lead">Découvert au début de ' + esc(monthLabel(m)) + ', tel qu\'il apparaît sur le compte. Il est retiré de l\'argent du quotidien de ce mois.</p>' + auto +
     '<form data-form="od" novalidate style="display:flex;flex-direction:column;gap:14px"><div class="field"><label for="od-amount">Découvert (€)</label><input id="od-amount" name="amount" inputmode="decimal" autocomplete="off" value="' + (v ? esc(fmtIn(v)) : '') + '" placeholder="ex. 400"></div>' +
-    '<p class="err" id="od-err" role="alert"></p><div class="foot">' + (v ? '<button type="button" class="btn danger" data-action="od-clear">Plus de découvert</button><span class="spacer"></span>' : '') +
+    '<p class="err" id="od-err" role="alert"></p><div class="foot">' + (v ? '<button type="button" class="btn danger" data-action="od-clear">Pas de découvert</button><span class="spacer"></span>' : '') +
+    (oi.manual ? '<button type="button" class="btn" data-action="od-auto">Report automatique</button>' : '') +
     '<button type="button" class="btn" data-action="close">Annuler</button><button type="submit" class="btn primary">Enregistrer</button></div></form>', '#od-amount');
 }
+/* v: amount typed (0 = no overdraft this month); null = back to the automatic carry-over */
 function saveOd(m, v){
   S.cfg.od = Object.assign({}, S.cfg.od || {});
-  if (v > 0) S.cfg.od[m] = round2(v); else delete S.cfg.od[m];
+  if (v == null) delete S.cfg.od[m]; else S.cfg.od[m] = round2(Math.max(0, v));
   persistCfg(); closeModal(); render();
-  toast(v > 0 ? 'Découvert de ' + eur(v) + ' enregistré pour ' + monthLabel(m) : 'Découvert retiré pour ' + monthLabel(m));
+  toast(v == null ? 'Découvert de ' + monthLabel(m) + ' : report automatique' : v > 0 ? 'Découvert de ' + eur(v) + ' enregistré pour ' + monthLabel(m) : 'Pas de découvert en ' + monthLabel(m));
+}
+function openExtra(m, id){
+  var x = id ? extrasOf(m).find(function(e){ return e.id === id; }) : null;
+  S.ex = {m:m, id:x ? x.id : null};
+  showModal('<h2>' + (x ? 'Rentrée ponctuelle' : 'Nouvelle rentrée ponctuelle') + '</h2><p class="lead">De l\'argent reçu une seule fois en ' + esc(monthLabel(m)) + ' (un don, un remboursement, une prime…). Il s\'ajoute à ce mois seulement.</p>' +
+    '<form data-form="extra" novalidate style="display:flex;flex-direction:column;gap:14px">' +
+    '<div class="field"><label for="ex-name">Qui ou quoi ?</label><input id="ex-name" name="name" maxlength="60" value="' + esc(x ? x.name : '') + '" placeholder="ex. Airton, aide de la mairie…"></div>' +
+    '<div class="field"><label for="ex-amount">Montant (€)</label><input id="ex-amount" name="amount" inputmode="decimal" autocomplete="off" value="' + (x ? esc(fmtIn(x.amount)) : '') + '" placeholder="0"></div>' +
+    '<p class="err" id="ex-err" role="alert"></p><div class="foot">' + (x ? '<button type="button" class="btn danger" data-action="ex-del">Supprimer</button><span class="spacer"></span>' : '') +
+    '<button type="button" class="btn" data-action="close">Annuler</button><button type="submit" class="btn primary">Enregistrer</button></div></form>', x ? '#ex-amount' : '#ex-name');
+}
+function saveExtra(list){
+  var X = S.ex;
+  S.cfg.extra = Object.assign({}, S.cfg.extra || {});
+  if (list.length) S.cfg.extra[X.m] = list; else delete S.cfg.extra[X.m];
+  persistCfg(); closeModal(); render();
+}
+function submitExtra(form){
+  var X = S.ex, name = form.elements.name.value.trim(), v = parseAmt(form.elements.amount.value);
+  if (!(v > 0)) { $('#ex-err').textContent = 'Indiquez un montant supérieur à 0.'; return; }
+  var list = extrasOf(X.m).slice(), it = {id:X.id || ('x-' + uid()), name:name.slice(0, 60), amount:round2(v)};
+  var k = list.findIndex(function(e){ return e.id === it.id; });
+  if (k >= 0) list[k] = it; else list.push(it);
+  var m = X.m; saveExtra(list); toast('+ ' + eur(v) + ' en ' + monthLabel(m) + (name ? ' (' + name + ')' : ''));
 }
 function submitOd(form){
   var raw = form.elements.amount.value.replace(/[−-]/g, '').trim(), v = raw === '' ? 0 : parseAmt(raw);
@@ -1154,14 +1227,16 @@ function debtsPanel(infos){
   var first = infos.map(function(i){ return debtFrom(i.d); }).reduce(function(a,b){ return a < b ? a : b; });
   var rows = infos.map(function(i){
     var d = i.d, end = endMonthOf(i), sk = (d.skipped || []).slice().sort();
-    var endTxt = i.rem <= 0 ? 'Soldée' : (end ? monthLabel(end) : 'à définir');
+    var endTxt = i.mode === 'paid' && i.rem <= 0 ? 'Payée' : i.rem <= 0 ? 'Soldée' : i.mode === 'nego' ? 'à négocier' : (end ? monthLabel(end) : 'à définir');
+    var status = i.mode === 'nego' ? '<p class="dstat nego">En négociation : comptée dans les dettes, rien n\'est retiré chaque mois</p>' :
+      i.mode === 'paid' ? '<p class="dstat paid">✓ Payée en une fois le ' + esc(dateLabel(d.paidOn)) + (d.paidBy ? ' par ' + esc(d.paidBy) : '') + '</p>' : '';
     return '<div class="drow click" role="button" tabindex="0" data-action="edit-debt" data-id="' + esc(d.id) + '" data-k="dr-' + esc(d.id) + '" aria-label="Modifier ' + esc(d.name) + '"><div class="dtop"><b>' + esc(d.name) + '</b><span class="drem">' + eur(i.rem) + '<small>restants</small></span></div>' +
       '<div class="dbar"><div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(i.pct*100) + '" aria-label="Part remboursée de ' + esc(d.name) + '"><i style="width:' + (i.pct*100).toFixed(1) + '%"></i></div><span class="p">' + Math.round(i.pct*100) + ' %</span></div>' +
       '<div class="dfacts"><div><span>Dette de départ</span><b>' + eur(i.start) + '</b></div><div><span>Déjà remboursé</span><b>' + eur(i.paid) + '</b></div>' +
-      '<div><span>Mensualité</span><b>' + (i.mo > 0 ? eur(i.mo) : 'non définie') + '</b></div><div><span>Fin prévue</span><b>' + esc(endTxt) + '</b></div></div>' +
+      '<div><span>Mensualité</span><b>' + (i.mode === 'nego' ? 'aucune pour l\'instant' : i.mode === 'paid' ? '—' : i.mo > 0 ? eur(i.mo) : 'non définie') + '</b></div><div><span>Fin prévue</span><b>' + esc(endTxt) + '</b></div></div>' +
       (sk.length ? '<p class="dskip">Non prélevé : ' + sk.map(function(m){ return esc(monthLabel(m)); }).join(', ') + '</p>' : '') +
-      (d.note ? '<p class="dnote-t">' + esc(d.note) + '</p>' : '') +
-      '<span class="dedit">Toucher pour modifier le montant ou ajouter une note ›</span></div>';
+      status + (d.note ? '<p class="dnote-t">' + esc(d.note) + '</p>' : '') +
+      '<span class="dedit">Toucher pour modifier (montant, négociation, paiement, note) ›</span></div>';
   }).join('');
   var list = '<section class="card dlist"><div class="dl-head"><h3>Détail des dettes</h3><span class="tot">Prélevées automatiquement chaque mois, à partir de ' + esc(monthLabel(first)) + '</span></div>' + rows + '</section>';
   var skip = '<div class="skipbox"><p class="note-line">Si un prélèvement n\'a pas eu lieu un mois, signalez-le : la dette restante et la date de fin sont recalculées.</p>' +
@@ -1325,7 +1400,7 @@ function showModal(inner, focusSel, cls){
   var f = focusSel && $('#modal').querySelector(focusSel);
   if (f) setTimeout(function(){ f.focus(); }, 30);
 }
-function closeModal(){ $('#modal').innerHTML = ''; document.body.classList.remove('lock'); S.m = S.i = S.sk = S.debt = S.pend = S.fs = S.od = null; S.hm = S.docOpen = false; }
+function closeModal(){ $('#modal').innerHTML = ''; document.body.classList.remove('lock'); S.m = S.i = S.sk = S.debt = S.pend = S.fs = S.od = S.ex = null; S.hm = S.docOpen = false; }
 function busyModal(){ return !!(S.scanCtl || S.askBusy); }
 var toastTimer;
 function toast(msg, undo){
@@ -1577,7 +1652,7 @@ function budgetContext(){
     charges_fixes_par_mois: fx.map(function(i){ return {id:i.id, nom:i.name, montant:+i.amount || 0}; }),
     dettes: infos.map(function(i){ return {id:i.d.id, nom:i.d.name, dette_de_depart:i.start, reste:i.rem, mensualite:i.mo}; }),
     budget_quotidien_par_mois: itemsOf('variable').map(function(i){ return {id:i.id, nom:i.name, active:isOn(i), part_pourcent:Math.round(+i.amount || 0), budget:ds.bud[i.id] || 0}; }),
-    totaux: {entrees:planIncome(), charges_fixes:planFixed(), mensualites_dettes:monthlyDebts(infos), decouvert_a_combler_ce_mois:odOf(nowMonth()), disponible_pour_le_quotidien:round2(ds.left), deja_depense_ce_mois:round2(ds.rDay)},
+    totaux: {entrees:planIncome(), charges_fixes:planFixed(), mensualites_dettes:monthlyDebts(infos), decouvert_a_combler_ce_mois:odOf(nowMonth()), rentrees_ponctuelles_ce_mois:extraOf(nowMonth()), disponible_pour_le_quotidien:round2(ds.left), deja_depense_ce_mois:round2(ds.rDay)},
     historique_des_demandes_actives: act.slice(-8).map(function(e, k){ return {rang_depuis_la_derniere:act.slice(-8).length - k, demande:e.q, modifications:e.lines.map(function(l){ return l.t; })}; })
   });
 }
@@ -1667,7 +1742,7 @@ var OPS_HELP =
 /* money left for daily spending with a given config */
 function dispoOf(cfg){
   var keep = S.cfg; S.cfg = cfg;
-  try { return round2(planIncome() - planFixed() - monthlyDebts(cfg.debts.map(dInfo)) - odOf(nowMonth())); } finally { S.cfg = keep; }
+  try { return round2(planIncome() - planFixed() - monthlyDebts(cfg.debts.map(dInfo)) - odOf(nowMonth()) + extraOf(nowMonth())); } finally { S.cfg = keep; }
 }
 function propHTML(P){
   var lis = function(lines){ return '<ul>' + lines.map(function(l){ return '<li' + (l.miss ? ' class="miss"' : '') + '>' + esc(l.t) + '</li>'; }).join('') + '</ul>'; };
@@ -1819,8 +1894,17 @@ function debtHTML(){
     '<form data-form="debt" novalidate style="display:flex;flex-direction:column;gap:14px">' +
     '<div class="field"><label for="d-name">Nom</label><input id="d-name" name="name" maxlength="60" value="' + esc(D.name) + '" placeholder="ex. Cofidis"></div>' +
     '<div class="field"><label for="d-start">Montant total de la dette, au départ (€)</label><input id="d-start" name="start" inputmode="decimal" autocomplete="off" value="' + esc(D.start) + '" placeholder="0"></div>' +
-    '<div class="field"><label for="d-monthly">Prélevé chaque mois (€)</label><input id="d-monthly" name="monthly" inputmode="decimal" autocomplete="off" value="' + esc(D.monthly) + '" placeholder="0"></div>' +
-    '<div class="field"><label for="d-from">Premier prélèvement</label><input id="d-from" name="from" type="month" value="' + esc(D.from) + '"></div>' +
+    '<fieldset class="dmode"><legend>Comment est-elle réglée ?</legend>' +
+    [['monthly','Prélevée chaque mois'],['nego','En négociation','comptée dans les dettes, mais rien n\'est retiré chaque mois'],['paid','Payée en une fois']].map(function(o){
+      return '<label><input type="radio" name="mode" value="' + o[0] + '"' + (D.mode === o[0] ? ' checked' : '') + '><span>' + o[1] + (o[2] ? '<small>' + o[2] + '</small>' : '') + '</span></label>';
+    }).join('') + '</fieldset>' +
+    (D.mode === 'monthly' ?
+      '<div class="field"><label for="d-monthly">Prélevé chaque mois (€)</label><input id="d-monthly" name="monthly" inputmode="decimal" autocomplete="off" value="' + esc(D.monthly) + '" placeholder="0"></div>' +
+      '<div class="field"><label for="d-from">Premier prélèvement</label><input id="d-from" name="from" type="month" value="' + esc(D.from) + '"></div>' : '') +
+    (D.mode === 'paid' ?
+      '<div class="field"><label for="d-paidon">Payée le</label><input id="d-paidon" name="paidOn" type="date" value="' + esc(D.paidOn) + '"></div>' +
+      '<div class="field"><label for="d-paidby">Payée par</label><input id="d-paidby" name="paidBy" maxlength="60" value="' + esc(D.paidBy) + '" placeholder="ex. M\'ziza, Airton…"></div>' +
+      '<label class="dcheck"><input type="checkbox" name="paidSelf"' + (D.paidSelf ? ' checked' : '') + '><span>Payée avec l\'argent de M\'ziza<small>le montant est retiré du budget de ce mois-là</small></span></label>' : '') +
     '<div class="field"><label for="d-note">Note (facultatif)</label><textarea id="d-note" name="note" maxlength="400" placeholder="ex. Payé le 5 novembre par Airton">' + esc(D.note) + '</textarea></div>' +
     '<p class="err" id="d-err" role="alert"></p>' +
     '<div class="foot">' + (d ? '<button type="button" class="btn danger" data-action="del-debt">Supprimer</button><span class="spacer"></span>' : '') +
@@ -1828,23 +1912,41 @@ function debtHTML(){
 }
 function openDebt(id){
   var d = id ? S.cfg.debts.find(function(x){ return x.id === id; }) : null;
-  var D = d ? {id:d.id, name:d.name || '', start:fmtIn(d.start || 0), monthly:fmtIn(d.monthly || 0), from:debtFrom(d), note:d.note || ''}
-            : {id:null, name:'', start:'', monthly:'', from:addMonths(nowMonth(), 1), note:''};
+  var D = d ? {id:d.id, name:d.name || '', start:fmtIn(d.start || 0), monthly:fmtIn(d.monthly || 0), from:debtFrom(d), note:d.note || '',
+               mode:debtMode(d), paidOn:d.paidOn || todayISO(), paidBy:d.paidBy || '', paidSelf:!!d.paidSelf}
+            : {id:null, name:'', start:'', monthly:'', from:addMonths(nowMonth(), 1), note:'', mode:'monthly', paidOn:todayISO(), paidBy:'', paidSelf:false};
   S.debt = D;
   showModal(debtHTML(), d ? null : '#d-name');
 }
+/* keeps what was typed when the mode changes, then the form is redrawn */
+function readDebtForm(form){
+  var D = S.debt, el = form.elements;
+  ['name','start','monthly','from','note','paidOn','paidBy'].forEach(function(k){ if (el[k]) D[k] = el[k].value; });
+  if (el.paidSelf) D.paidSelf = el.paidSelf.checked;
+  var r = form.querySelector('input[name="mode"]:checked'); if (r) D.mode = r.value;
+}
 function submitDebt(form){
+  readDebtForm(form);
   var err = $('#d-err'), D = S.debt;
-  var name = form.elements.name.value.trim(), start = parseAmt(form.elements.start.value), monthly = form.elements.monthly.value.trim() === '' ? 0 : parseAmt(form.elements.monthly.value);
-  var from = form.elements.from.value.trim(), note = form.elements.note.value.trim();
+  var name = D.name.trim(), start = parseAmt(D.start), monthly = String(D.monthly).trim() === '' ? 0 : parseAmt(D.monthly);
+  var from = String(D.from).trim(), note = D.note.trim();
   if (!name) { err.textContent = 'Indiquez un nom.'; return; }
   if (!(start >= 0)) { err.textContent = 'Indiquez le montant de la dette.'; return; }
-  if (!(monthly >= 0)) { err.textContent = 'La mensualité doit être un nombre positif ou nul.'; return; }
-  if (!/^\d{4}-\d{2}$/.test(from)) { err.textContent = 'Indiquez le mois du premier prélèvement (ex. 2026-11).'; return; }
+  if (D.mode === 'monthly' && !(monthly >= 0)) { err.textContent = 'La mensualité doit être un nombre positif ou nul.'; return; }
+  if (D.mode === 'monthly' && !/^\d{4}-\d{2}$/.test(from)) { err.textContent = 'Indiquez le mois du premier prélèvement (ex. 2026-11).'; return; }
+  if (D.mode === 'paid' && !/^\d{4}-\d{2}-\d{2}$/.test(D.paidOn)) { err.textContent = 'Indiquez la date du paiement.'; return; }
   var d = D.id ? S.cfg.debts.find(function(x){ return x.id === D.id; }) : null;
-  if (d) { d.name = name; d.start = round2(start); d.monthly = round2(monthly); d.from = from; d.note = note; d.skipped = (d.skipped || []).filter(function(m){ return m >= from; }); }
-  else S.cfg.debts.push({id:'d-' + uid(), name:name, start:round2(start), monthly:round2(monthly), from:from, skipped:[], note:note});
-  persistCfg(); closeModal(); render(); toast(d ? 'Dette modifiée' : 'Dette ajoutée');
+  var wasNego = d && debtMode(d) === 'nego';
+  if (!d) { d = {id:'d-' + uid(), skipped:[], monthly:0}; S.cfg.debts.push(d); }
+  d.name = name; d.start = round2(start); d.note = note;
+  if (D.mode === 'monthly') { d.monthly = round2(monthly); d.from = from; d.skipped = (d.skipped || []).filter(function(m){ return m >= from; }); }
+  if (!/^\d{4}-\d{2}$/.test(d.from || '')) d.from = addMonths(nowMonth(), 1);
+  if (D.mode === 'paid' && wasNego) d.monthly = 0; /* never debited before: the whole amount was paid at once */
+  if (D.mode === 'monthly') delete d.mode; else d.mode = D.mode;
+  if (D.mode === 'paid') { d.paidOn = D.paidOn; d.paidBy = D.paidBy.trim().slice(0, 60); d.paidSelf = !!D.paidSelf; }
+  else { delete d.paidOn; delete d.paidBy; delete d.paidSelf; }
+  persistCfg(); closeModal(); render();
+  toast(D.mode === 'nego' ? name + ' : en négociation' : D.mode === 'paid' ? name + ' : payée le ' + dateLabel(D.paidOn) : D.id ? 'Dette modifiée' : 'Dette ajoutée');
 }
 
 /* missed debit */
@@ -1930,6 +2032,9 @@ document.addEventListener('click', function(e){
   if (a === 'cm-prev' || a === 'cm-next') { S.cm = addMonths(S.cm || nowMonth(), a === 'cm-prev' ? -1 : 1); render(); return; }
   if (a === 'cm-now') { S.cm = null; render(); return; }
   if (a === 'od-clear') { if (S.od) saveOd(S.od.m, 0); return; }
+  if (a === 'od-auto') { if (S.od) saveOd(S.od.m, null); return; }
+  if (a === 'ex-edit') return openExtra(el.dataset.m || nowMonth(), el.dataset.id || null);
+  if (a === 'ex-del') { if (S.ex) { var exm = S.ex.m, exid = S.ex.id; saveExtra(extrasOf(exm).filter(function(x){ return x.id !== exid; })); toast('Rentrée ponctuelle supprimée'); } return; }
   if (a === 'del-debt') {
     if (!el.dataset.armed) { el.dataset.armed = '1'; el.classList.add('armed'); el.textContent = 'Confirmer la suppression'; return; }
     var did = S.debt && S.debt.id; S.cfg.debts = S.cfg.debts.filter(function(x){ return x.id !== did; });
@@ -2059,6 +2164,7 @@ document.addEventListener('submit', function(e){
   else if (k === 'skip' && S.sk) submitSkip();
   else if (k === 'debt' && S.debt) submitDebt(f);
   else if (k === 'od' && S.od) submitOd(f);
+  else if (k === 'extra' && S.ex) submitExtra(f);
   else if (k === 'ask') askClaude(S.askQ);
 });
 document.addEventListener('input', function(e){
@@ -2079,6 +2185,7 @@ document.addEventListener('change', function(e){
     if (ci) { if (e.target.checked) delete ci.active; else ci.active = false; persistCfg(); render(); }
     return;
   }
+  if (e.target.name === 'mode' && S.debt && e.target.form) { readDebtForm(e.target.form); var dsh = $('#modal .sheet'); if (dsh) dsh.innerHTML = debtHTML(); return; }
   if (id === 'scan-file') { var file = e.target.files && e.target.files[0]; e.target.value = ''; if (file) handleScan(file); return; }
   if (id === 'doc-photo' || id === 'doc-file') { var dfile = e.target.files && e.target.files[0]; e.target.value = ''; if (dfile) handleDoc(dfile); return; }
   if (id === 'm-ref' && S.m) { S.m.ref = e.target.value; S.m.refSet = true; if (S.m.ref === '__new') refreshMove('m-name'); }

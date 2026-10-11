@@ -47,6 +47,11 @@ Document `app/config` :
 
 `app/config.od` (version 24) : découvert au début de chaque mois `{"YYYY-MM": montant}` ; il est retiré de l'argent du quotidien de ce mois (`odOf`, `dailyStats`). Saisi depuis la carte « Ce mois-ci » de l'accueil ou la page Budget quotidien. L'utilisateur ne voulait PAS le mettre en dette : il veut que ça se répercute sur le mois et suivre où elle en est dans le mois.
 
+Version 28 :
+- **Découvert reporté automatiquement** : si un mois n'a pas de découvert saisi (`cfg.od[m]` absent), il reprend ce qui a manqué à la fin du mois précédent (`odInfo` : `dailyStats(prev).rDay − left`, à partir du mois de `startDate`). Saisir un montant le remplace ; « Pas de découvert » enregistre 0 ; « Report automatique » efface la saisie.
+- **Rentrées ponctuelles** : `cfg.extra = {"YYYY-MM": [{id, name, amount}]}`, ajoutées à l'argent de ce mois seulement (`extraOf`), saisies depuis la carte du mois (« + Ajouter une rentrée ponctuelle »).
+- **Modes de dette** (`d.mode`) : absent = prélevée chaque mois ; `"nego"` = en négociation (comptée dans le reste à rembourser, jamais déduite par mois, pas de date de fin) ; `"paid"` = payée en une fois (`paidOn` date, `paidBy` texte, `paidSelf` = payée avec l'argent de M'ziza → montant retiré du budget de ce mois-là). L'arriéré de loyer est passé en `"nego"` le 2026-10-12.
+
 Collection `tx` (une dépense par document) : `{date, kind:"expense", ref:<id item>, label (nom de la catégorie), name (nom de la dépense, depuis v25), amount, note}`.
 
 Collection `hist` (historique de TOUTES les demandes à Claude, 30 jours, 120 max) : `{q, t (ms), st:'applied'|'proposed'|'question' (absent = applied), lines:[{t, miss?}], ops, a (réponse), before, after, undone, dead}`. `dead` = annulée puis dépassée par une nouvelle application (plus de « Rétablir »).
@@ -90,7 +95,7 @@ Mode local de secours : localStorage `budget-mziza-v2` (cfg + tx), `budget-mziza
 
 ## Ce qui a été fait / exclu
 
-- Fait : tout ce qui précède, publié (versions 1 à 27 de l'artifact), commité sur GitHub. Version 21 testée dans un navigateur local à 420 px avec un faux Claude (pages, dettes, entrées, proposition/validation, historique, PDF texte, CSV, courbe plein écran) ; pas encore testée avec le vrai Claude ni sur téléphone.
+- Fait : tout ce qui précède, publié (versions 1 à 28 de l'artifact), commité sur GitHub. Version 21 testée dans un navigateur local à 420 px avec un faux Claude (pages, dettes, entrées, proposition/validation, historique, PDF texte, CSV, courbe plein écran) ; pas encore testée avec le vrai Claude ni sur téléphone.
 - La page est maintenant partagée « toute personne ayant le lien » (réglé par l'utilisateur).
 - Impossible depuis une page web : créer automatiquement une icône d'écran d'accueil ou installer Claude ; changer l'icône du raccourci d'une page claude.ai (elle est choisie par claude.ai) ; lire un compte bancaire (idée évoquée : Open Banking DSP2 via un agrégateur type Powens/Bridge, lecture seule, mais il faudrait un serveur, des clés et un contrat — non fait ; alternative simple proposée : import d'un export CSV de la banque, classé automatiquement, sans aucun accès au compte — **à proposer/construire si l'utilisateur le veut**).
 - Partage : la page est **privée**, l'utilisateur doit la partager lui-même ; sur claude.ai, la base est partagée en temps réel entre tous ceux qui ont accès, écriture réservée à ceux qui ont le droit d'écrire (niveau « interact » testé OK). Ouverture par quelqu'un sans compte Claude : non vérifié, probablement impossible.
